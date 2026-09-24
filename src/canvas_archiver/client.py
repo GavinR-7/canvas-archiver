@@ -1,19 +1,19 @@
-"""Thin wrapper around :mod:`canvasapi`.
+"""Canvas API client: endpoint knowledge on top of the raw HTTP transport.
 
-``canvasapi`` handles authentication (a ``Bearer`` header on every request) and
-Link-header pagination, but it raises a family of exceptions and returns objects
-whose attributes are conditionally present. This module is the single place
-where that messiness is absorbed, so the rest of the package deals only with
-plain dataclasses.
+:mod:`canvas_archiver.http_client` knows how to make an authenticated,
+paginated, rate-limit-aware GET. This module knows *which* GETs to make and how
+to turn the JSON into dataclasses the rest of the package can rely on.
+
+Canvas returns objects whose fields are conditionally present — a course outside
+its availability window arrives with ``access_restricted_by_date`` and almost
+nothing else — so conversion happens once, here, at the boundary.
 
 REST endpoints used here
 ------------------------
-* :meth:`CanvasClient.verify` -> ``GET /api/v1/users/self`` — confirms the token
-  is valid and tells us who it belongs to.
-* :meth:`CanvasClient.list_courses` -> ``GET /api/v1/courses`` with
+* :meth:`CanvasClient.verify` -> ``GET /api/v1/users/self``
+* :meth:`CanvasClient.iter_courses` -> ``GET /api/v1/courses`` with
   ``include[]=term``, ``include[]=teachers``, ``include[]=total_students`` and an
-  ``enrollment_state`` filter. Canvas paginates this endpoint via the ``Link``
-  header; ``canvasapi``'s ``PaginatedList`` follows ``rel="next"`` transparently.
+  ``enrollment_state`` filter, paginated via the ``Link`` header.
 """
 
 from __future__ import annotations
@@ -21,16 +21,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from canvasapi import Canvas
-from canvasapi.exceptions import (
-    CanvasException,
-    Forbidden,
-    InvalidAccessToken,
-    ResourceDoesNotExist,
-    Unauthorized,
-)
-
+from .auth import AuthMode, Credential, SessionExpiredError, build_credential
 from .config import Config
+from .http_client import (
+    AccessDeniedError,
+    AuthenticationError,
+    CanvasHTTP,
+    CanvasHTTPError,
+    NotFoundError,
+)
 from .log import get_logger
 from .terms import TermInfo, resolve_term
 
@@ -40,13 +39,20 @@ logger = get_logger("client")
 ACTIVE_STATES = ("active",)
 PAST_STATES = ("active", "completed", "invited_or_pending")
 
+# Re-exported so callers can catch client failures without importing the
+# transport module directly.
+CanvasClientError = CanvasHTTPError
 
-class CanvasClientError(RuntimeError):
-    """A Canvas API failure that the CLI should report and exit on."""
-
-
-class AuthenticationError(CanvasClientError):
-    """The token is missing, expired, revoked, or for the wrong Canvas host."""
+__all__ = [
+    "CanvasClient",
+    "CanvasClientError",
+    "CourseSummary",
+    "AuthenticationError",
+    "SessionExpiredError",
+    "AccessDeniedError",
+    "NotFoundError",
+    "to_course_summary",
+]
 
 
 @dataclass(frozen=True)
@@ -65,7 +71,7 @@ class CourseSummary:
         restricted: ``True`` when Canvas returned the course with
             ``access_restricted_by_date``, meaning content is not readable.
         teachers: Instructor display names, when Canvas includes them.
-        raw: The underlying ``canvasapi`` object, for collectors that need more.
+        raw: The decoded JSON object, for collectors that need more fields.
     """
 
     id: int
@@ -86,77 +92,63 @@ class CourseSummary:
         return self.name
 
 
-def _attr(obj: Any, name: str, default: Any = None) -> Any:
-    """``getattr`` that tolerates canvasapi objects with absent attributes."""
-    value = getattr(obj, name, default)
+def _get(obj: Any, key: str, default: Any = None) -> Any:
+    """Read *key* from a decoded JSON object, tolerating absence and null."""
+    if not isinstance(obj, dict):
+        return default
+    value = obj.get(key, default)
     return default if value is None else value
 
 
-def _extract_term(course: Any) -> TermInfo:
+def _extract_term(course: dict[str, Any]) -> TermInfo:
     """Resolve a course's term from the ``include[]=term`` payload."""
-    term = _attr(course, "term", None)
-    if term is None:
-        return resolve_term(None, None, _attr(course, "enrollment_term_id", None))
-
-    if isinstance(term, dict):
-        name = term.get("name")
-        start_at = term.get("start_at")
-        term_id = term.get("id")
-    else:
-        name = _attr(term, "name", None)
-        start_at = _attr(term, "start_at", None)
-        term_id = _attr(term, "id", None)
-
-    return resolve_term(name, start_at, term_id)
+    term = _get(course, "term")
+    if not isinstance(term, dict):
+        return resolve_term(None, None, _get(course, "enrollment_term_id"))
+    return resolve_term(
+        _get(term, "name"), _get(term, "start_at"), _get(term, "id")
+    )
 
 
-def _extract_teachers(course: Any) -> tuple[str, ...]:
+def _extract_teachers(course: dict[str, Any]) -> tuple[str, ...]:
     """Pull instructor display names out of the ``include[]=teachers`` payload."""
-    teachers = _attr(course, "teachers", []) or []
     names: list[str] = []
-    for teacher in teachers:
-        if isinstance(teacher, dict):
-            name = teacher.get("display_name") or teacher.get("name")
-        else:
-            name = _attr(teacher, "display_name", None) or _attr(teacher, "name", None)
+    for teacher in _get(course, "teachers", []) or []:
+        name = _get(teacher, "display_name") or _get(teacher, "name")
         if name:
             names.append(str(name))
     return tuple(names)
 
 
-def _extract_enrollment_state(course: Any) -> str:
+def _extract_enrollment_state(course: dict[str, Any]) -> str:
     """Return the enrollment state for *this* user on the course."""
-    enrollments = _attr(course, "enrollments", []) or []
-    for enrollment in enrollments:
-        state = (
-            enrollment.get("enrollment_state")
-            if isinstance(enrollment, dict)
-            else _attr(enrollment, "enrollment_state", None)
-        )
+    for enrollment in _get(course, "enrollments", []) or []:
+        state = _get(enrollment, "enrollment_state")
         if state:
             return str(state)
     return "unknown"
 
 
-def to_course_summary(course: Any) -> CourseSummary:
-    """Convert a ``canvasapi`` course object into a :class:`CourseSummary`.
+def to_course_summary(course: dict[str, Any]) -> CourseSummary:
+    """Convert a decoded Canvas course object into a :class:`CourseSummary`.
 
     Courses outside their availability window come back with
     ``access_restricted_by_date`` set and almost no other fields; those are
     flagged rather than dropped, so the CLI can show the user why a course is
     missing from the archive.
     """
-    restricted = bool(_attr(course, "access_restricted_by_date", False))
-    course_code = str(_attr(course, "course_code", "") or "")
-    name = str(_attr(course, "name", "") or course_code or f"Course {course.id}")
+    course_id = int(_get(course, "id", 0) or 0)
+    restricted = bool(_get(course, "access_restricted_by_date", False))
+    course_code = str(_get(course, "course_code", "") or "")
+    name = str(_get(course, "name", "") or course_code or f"Course {course_id}")
 
     return CourseSummary(
-        id=int(course.id),
+        id=course_id,
         name=name,
         course_code=course_code,
         term=_extract_term(course),
         enrollment_state=_extract_enrollment_state(course),
-        workflow_state=str(_attr(course, "workflow_state", "unknown")),
+        workflow_state=str(_get(course, "workflow_state", "unknown")),
         restricted=restricted,
         teachers=_extract_teachers(course),
         raw=course,
@@ -164,49 +156,68 @@ def to_course_summary(course: Any) -> CourseSummary:
 
 
 class CanvasClient:
-    """Authenticated handle on a Canvas instance.
+    """Authenticated, read-only handle on a Canvas instance."""
 
-    The client is constructed from a :class:`~canvas_archiver.config.Config` and
-    holds exactly one ``canvasapi.Canvas`` session for the life of a run.
-    """
+    def __init__(self, config: Config, credential: Credential | None = None) -> None:
+        """Build the client.
 
-    def __init__(self, config: Config) -> None:
-        """Build the underlying ``canvasapi`` session. No network call is made here."""
+        Args:
+            config: Resolved runtime configuration.
+            credential: Pre-built credential. When ``None``, one is assembled
+                from ``config.auth_mode`` — which may raise
+                :class:`SessionExpiredError` if no saved login exists.
+
+        Raises:
+            AuthError: Token mode with no token.
+            SessionExpiredError: Session mode with no usable saved session.
+        """
         self.config = config
-        self._canvas = Canvas(config.api_url, config.token)
+        self.credential = credential or build_credential(
+            config.auth_mode, token=config.token, api_url=config.api_url
+        )
+        self.http = CanvasHTTP(config.api_url, self.credential)
 
     @property
     def api_url(self) -> str:
         """The Canvas base URL this client talks to."""
         return self.config.api_url
 
-    def verify(self) -> str:
-        """Confirm the token works and return the account's display name.
+    def close(self) -> None:
+        """Release the underlying connection pool."""
+        self.http.close()
 
-        Hits ``GET /api/v1/users/self``, which is the cheapest authenticated
-        request Canvas offers and therefore the right smoke test.
+    def __enter__(self) -> "CanvasClient":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def describe_auth(self) -> str:
+        """A safe-to-print description of how this client is authenticating."""
+        if self.credential.mode is AuthMode.TOKEN:
+            return f"bearer token {self.config.redacted_token()}"
+        return self.credential.describe()
+
+    def verify(self) -> str:
+        """Confirm the credential works and return the account's display name.
+
+        Hits ``GET /api/v1/users/self``, the cheapest authenticated request
+        Canvas offers and therefore the right smoke test.
 
         Raises:
-            AuthenticationError: The token was rejected.
+            AuthenticationError: A bearer token was rejected.
+            SessionExpiredError: A saved browser session was rejected.
             CanvasClientError: Any other API or transport failure.
         """
-        try:
-            user = self._canvas.get_current_user()
-        except (InvalidAccessToken, Unauthorized) as exc:
-            raise AuthenticationError(
-                f"Canvas rejected the access token for {self.api_url}. "
-                "It may be expired, revoked, or issued by a different Canvas host. "
-                "Generate a new one under Account → Settings → Approved Integrations."
-            ) from exc
-        except CanvasException as exc:
-            raise CanvasClientError(f"Canvas API error contacting {self.api_url}: {exc}") from exc
-        except Exception as exc:  # network / DNS / TLS
-            raise CanvasClientError(f"Could not reach {self.api_url}: {exc}") from exc
-
-        return str(_attr(user, "name", None) or _attr(user, "short_name", None) or f"user {user.id}")
+        user = self.http.get_json("/api/v1/users/self")
+        return str(
+            _get(user, "name")
+            or _get(user, "short_name")
+            or f"user {_get(user, 'id', '?')}"
+        )
 
     def iter_courses(self, *, include_past: bool = False) -> Iterator[CourseSummary]:
-        """Yield every course visible to the token, newest terms last.
+        """Yield every course visible to the credential.
 
         Args:
             include_past: Also include concluded enrollments and pending
@@ -215,37 +226,29 @@ class CanvasClient:
         Yields:
             :class:`CourseSummary` objects, including restricted ones so the
             caller can report them.
-
-        Raises:
-            AuthenticationError: The token was rejected.
-            CanvasClientError: Any other API or transport failure.
         """
         states = PAST_STATES if include_past else ACTIVE_STATES
         seen: set[int] = set()
 
         for state in states:
             try:
-                courses = self._canvas.get_courses(
-                    enrollment_state=state,
-                    include=["term", "teachers", "total_students"],
-                    per_page=100,
+                courses = self.http.paginate(
+                    "/api/v1/courses",
+                    {
+                        "enrollment_state": state,
+                        "include[]": ["term", "teachers", "total_students"],
+                    },
                 )
                 for course in courses:
-                    course_id = int(getattr(course, "id", 0) or 0)
+                    course_id = int(_get(course, "id", 0) or 0)
                     if not course_id or course_id in seen:
                         continue
                     seen.add(course_id)
                     yield to_course_summary(course)
-            except (InvalidAccessToken, Unauthorized) as exc:
-                raise AuthenticationError(
-                    f"Canvas rejected the access token for {self.api_url}."
-                ) from exc
-            except (Forbidden, ResourceDoesNotExist) as exc:
+            except (AccessDeniedError, NotFoundError) as exc:
                 # One enrollment state being unavailable must not kill the run.
                 logger.warning("Skipping enrollment_state=%s: %s", state, exc)
                 continue
-            except CanvasException as exc:
-                raise CanvasClientError(f"Canvas API error listing courses: {exc}") from exc
 
     def list_courses(self, *, include_past: bool = False) -> list[CourseSummary]:
         """Eagerly collect :meth:`iter_courses` into a list."""
