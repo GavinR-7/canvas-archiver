@@ -3,6 +3,12 @@
 .env.*
 !.env.example
 
+# ---- Saved browser session: password-equivalent ----
+# These normally live in ~/.local/share/canvas-archiver, outside the repo.
+# Listed here in case CANVAS_ARCHIVER_STATE_DIR is ever pointed inside it.
+cookies.json
+browser-profile/
+
 # ---- The archive itself never goes in git ----
 canvas-archive/
 archive/
