@@ -18,9 +18,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .auth import AuthError, AuthMode
+
 DEFAULT_API_URL = "https://canvas.cornell.edu"
 DEFAULT_ARCHIVE_ROOT = "~/canvas-archive"
 DEFAULT_WORKERS = 4
+DEFAULT_AUTH_MODE = AuthMode.SESSION
 
 #: Name of the log file written inside the archive root.
 LOG_FILENAME = "archive.log"
@@ -37,6 +40,8 @@ class Config:
     Attributes:
         api_url: Base URL of the Canvas instance, with no trailing slash.
         archive_root: Absolute path to the archive directory. Created on demand.
+        auth_mode: Whether to authenticate with a saved browser session or a
+            bearer token.
         workers: Number of concurrent download threads.
         _token: The Canvas personal access token. Private by convention; use
             :attr:`token` to read it and :meth:`redacted_token` to display it.
@@ -44,6 +49,7 @@ class Config:
 
     api_url: str
     archive_root: Path
+    auth_mode: AuthMode = DEFAULT_AUTH_MODE
     workers: int = DEFAULT_WORKERS
     _token: str = field(repr=False, default="")
 
@@ -74,7 +80,8 @@ class Config:
     def __str__(self) -> str:  # pragma: no cover - trivial
         return (
             f"Config(api_url={self.api_url!r}, archive_root={str(self.archive_root)!r}, "
-            f"workers={self.workers}, token={self.redacted_token()})"
+            f"auth_mode={self.auth_mode.value}, workers={self.workers}, "
+            f"token={self.redacted_token()})"
         )
 
 
@@ -103,31 +110,45 @@ def _clean_workers(raw: str | None) -> int:
     return workers
 
 
-def load_config(env_file: Path | None = None, *, require_token: bool = True) -> Config:
+def _clean_auth_mode(raw: str | None) -> AuthMode:
+    """Parse ``CANVAS_AUTH_MODE``, defaulting to session."""
+    try:
+        return AuthMode.parse(raw, DEFAULT_AUTH_MODE)
+    except AuthError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+def load_config(env_file: Path | None = None, *, require_auth: bool = True) -> Config:
     """Load configuration from the environment and an optional ``.env`` file.
 
     Args:
         env_file: Explicit path to a ``.env`` file. When ``None``, python-dotenv
             searches upward from the current working directory.
-        require_token: When ``False``, a missing token is tolerated and
-            :attr:`Config.token` is empty. Used by offline commands such as
-            ``status`` that never contact Canvas.
+        require_auth: When ``False``, missing credentials are tolerated. Used by
+            offline commands such as ``status`` that never contact Canvas.
 
     Raises:
-        ConfigError: If the token is required but absent, or if a value is
-            malformed.
+        ConfigError: If a value is malformed, or if credentials are required and
+            the selected auth mode has none available.
     """
     if env_file is not None:
         load_dotenv(dotenv_path=env_file, override=False)
     else:
         load_dotenv(override=False)
 
+    auth_mode = _clean_auth_mode(os.environ.get("CANVAS_AUTH_MODE"))
     token = os.environ.get("CANVAS_API_TOKEN", "").strip()
-    if require_token and not token:
+
+    # Only token mode can fail at config time. A missing *session* is not a
+    # configuration error — it is a "run `canvas-archive login`" prompt, raised
+    # by the auth layer where the remedy can be stated precisely.
+    if require_auth and auth_mode is AuthMode.TOKEN and not token:
         raise ConfigError(
-            "CANVAS_API_TOKEN is not set.\n"
-            "Create a token at <your Canvas>/profile/settings → Approved Integrations\n"
-            "→ + New Access Token, then copy .env.example to .env and paste it in."
+            "CANVAS_AUTH_MODE=token, but CANVAS_API_TOKEN is not set.\n"
+            "Create a token at <your Canvas>/profile/settings → Approved "
+            "Integrations → + New Access Token, then paste it into .env.\n"
+            "If your institution does not allow self-serve tokens, use "
+            "CANVAS_AUTH_MODE=session and run `canvas-archive login`."
         )
 
     api_url = _clean_url(os.environ.get("CANVAS_API_URL") or DEFAULT_API_URL)
@@ -141,6 +162,7 @@ def load_config(env_file: Path | None = None, *, require_token: bool = True) -> 
     return Config(
         api_url=api_url,
         archive_root=archive_root,
+        auth_mode=auth_mode,
         workers=workers,
         _token=token,
     )

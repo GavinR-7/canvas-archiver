@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from canvas_archiver.auth import AuthMode
 from canvas_archiver.config import (
     DEFAULT_API_URL,
     DEFAULT_WORKERS,
@@ -29,6 +30,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "CANVAS_API_TOKEN",
         "ARCHIVE_ROOT",
         "CANVAS_DOWNLOAD_WORKERS",
+        "CANVAS_AUTH_MODE",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -46,21 +48,68 @@ def test_defaults_are_applied(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert config.api_url == DEFAULT_API_URL
     assert config.workers == DEFAULT_WORKERS
+    assert config.auth_mode is AuthMode.SESSION
     assert config.archive_root == Path.home() / "canvas-archive"
     assert config.archive_root.is_absolute()
 
 
-def test_missing_token_raises_with_actionable_message(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_token_raises_only_in_token_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     _no_dotenv(monkeypatch)
+    monkeypatch.setenv("CANVAS_AUTH_MODE", "token")
+
     with pytest.raises(ConfigError, match="CANVAS_API_TOKEN is not set"):
         load_config()
 
 
+def test_missing_token_is_fine_in_session_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing session is not a config error -- it is a 'run login' prompt,
+    raised later by the auth layer where the remedy can be stated precisely."""
+    _no_dotenv(monkeypatch)
+    monkeypatch.setenv("CANVAS_AUTH_MODE", "session")
+
+    config = load_config()
+
+    assert config.auth_mode is AuthMode.SESSION
+    assert config.token == ""
+
+
 def test_missing_token_tolerated_for_offline_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     _no_dotenv(monkeypatch)
-    config = load_config(require_token=False)
+    monkeypatch.setenv("CANVAS_AUTH_MODE", "token")
+
+    config = load_config(require_auth=False)
+
     assert config.token == ""
     assert config.redacted_token() == "<unset>"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("session", AuthMode.SESSION),
+        ("token", AuthMode.TOKEN),
+        ("SESSION", AuthMode.SESSION),
+        ("  Token  ", AuthMode.TOKEN),
+        ("", AuthMode.SESSION),
+    ],
+)
+def test_auth_mode_is_parsed_case_insensitively(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: AuthMode
+) -> None:
+    _no_dotenv(monkeypatch)
+    monkeypatch.setenv("CANVAS_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CANVAS_AUTH_MODE", raw)
+
+    assert load_config().auth_mode is expected
+
+
+def test_invalid_auth_mode_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_dotenv(monkeypatch)
+    monkeypatch.setenv("CANVAS_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CANVAS_AUTH_MODE", "cookies")
+
+    with pytest.raises(ConfigError, match="CANVAS_AUTH_MODE"):
+        load_config()
 
 
 @pytest.mark.parametrize(
