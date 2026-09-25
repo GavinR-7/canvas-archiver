@@ -14,7 +14,7 @@ canvas-archive/
 archive/
 *.log
 
-# ---- Python ----
+# ---- Python (cli/) ----
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -23,6 +23,14 @@ build/
 dist/
 .venv/
 venv/
+
+# ---- Node / extension (extension/) ----
+node_modules/
+.output/
+.wxt/
+dist/
+*.tsbuildinfo
+.vite/
 
 # ---- Tooling caches ----
 .pytest_cache/

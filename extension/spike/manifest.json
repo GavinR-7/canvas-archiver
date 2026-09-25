@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Canvas Archiver — auth spike",
+  "version": "0.0.1",
+  "description": "Throwaway. Determines empirically how the Canvas session cookie attaches to /api/v1 requests.",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": ["https://canvas.cornell.edu/*"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Canvas auth spike"
+  }
+}

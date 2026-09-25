@@ -1,0 +1,286 @@
+# Extension architecture
+
+The product is a Chrome extension. The Python CLI in [`../cli/`](../cli/) is
+frozen as the reference implementation — it is not being extended, but its
+Canvas knowledge is hard-won and carries over wholesale. This document records
+what transfers, what is new, and how the MV3 pieces fit together.
+
+- [What carries over from the CLI](#what-carries-over-from-the-cli)
+- [MV3 in the shape this project needs it](#mv3-in-the-shape-this-project-needs-it)
+- [The auth spike](#the-auth-spike)
+- [Loading from WSL](#loading-from-wsl)
+- [Types](#types)
+
+---
+
+## What carries over from the CLI
+
+Six things were learned the expensive way and should not be rediscovered.
+
+### 1. Pagination is a `Link` header, and the default page size is 10
+
+Canvas paginates every list endpoint with an RFC 5988 `Link` header advertising
+`current`, `next`, `prev`, `first` and `last`. Iteration follows `rel="next"`
+until it is absent.
+
+```
+Link: <https://canvas.cornell.edu/api/v1/courses?page=2&per_page=100>; rel="next",
+      <https://canvas.cornell.edu/api/v1/courses?page=9&per_page=100>; rel="last"
+```
+
+`per_page=100` is Canvas's maximum and must be passed explicitly — the default
+of 10 turns one request into ten.
+
+**New wrinkle in the browser.** `Link` is not a
+[CORS-safelisted response header](https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_response_header).
+A cross-origin `fetch` can therefore receive the response body and still be
+unable to read the header that says where the next page is, unless the server
+sends `Access-Control-Expose-Headers`. This does not arise for a same-origin
+request. It is one of the things the spike measures, because it determines
+whether pagination is even possible from the service worker.
+
+### 2. Canvas signals throttling with 403, not 429
+
+Canvas returns **`403`** with `403 Forbidden (Rate Limit Exceeded)` in the body
+— the same status as an ordinary permission denial. A 403 has to be *read*
+before it can be classified. Canvas also reports quota in
+`X-Rate-Limit-Remaining`, a bucket starting near 700 and decremented by each
+request's cost; backing off voluntarily below ~100 is cheaper than being
+throttled and retrying.
+
+Retries use exponential backoff with **full jitter**, so concurrent requests do
+not all wake and retry in the same instant.
+
+### 3. `calendar_events` needs two requests, not one
+
+`GET /api/v1/calendar_events` is context-scoped: it needs
+`context_codes[]=course_<id>` per course, plus `all_events=true` to escape the
+default date window. Critically, **assignment due dates come back only with
+`type=assignment`, which is a separate request from `type=event`.** Asking for
+one and assuming it covers both silently loses every assignment deadline.
+
+### 4. `planner/items` is user-scoped, not course-scoped
+
+`GET /api/v1/planner/items?start_date=…&end_date=…` returns items across every
+course at once. One request per run, then split by `course_id` from each item's
+`plannable` payload — not one request per course.
+
+### 5. Read-only is enforced structurally, not promised
+
+The CLI exposes no `post`/`put`/`patch`/`delete`, and the single method every
+request funnels through asserts `method === "GET"`. The extension keeps this:
+there will be one `canvasFetch` helper, it will hard-code `method: "GET"`, and
+no configuration will relax it.
+
+A pleasant consequence: Canvas requires an `X-CSRF-Token` header for
+cookie-authenticated *writes*. Being GET-only, we never need one — which also
+means the extension never needs to read the `_csrf_token` cookie.
+
+### 6. Canvas omits fields as readily as it nulls them
+
+A course outside its availability window arrives with
+`access_restricted_by_date: true` and essentially nothing else. `"name": null`
+and a missing `name` key both occur. Normalisation happens once, at the
+boundary, converting API JSON into the types in `src/types/canvas.ts`, so no
+component downstream writes a defensive lookup.
+
+Restricted courses are **flagged, not dropped**, so the UI can explain an
+absence rather than silently producing one.
+
+### Also carried: timestamps stay as Canvas sent them
+
+ISO 8601, UTC, `Z` suffix, stored verbatim. Conversion to local time happens at
+render. Stored data outlives any one machine's timezone setting.
+
+---
+
+## MV3 in the shape this project needs it
+
+Manifest V3 splits an extension into several isolated contexts that cannot call
+each other's functions directly. They pass messages instead. The pieces:
+
+### `manifest.json`
+
+The declaration of everything: which scripts exist, which permissions are
+requested, what the toolbar button does. Chrome reads it at install time. There
+is no code in it, and getting it wrong usually produces silence rather than an
+error.
+
+Two permission fields that are easy to confuse:
+
+- **`permissions`** — capability APIs (`storage`, `scripting`, `tabs`).
+- **`host_permissions`** — which *sites* the extension may talk to
+  (`https://canvas.cornell.edu/*`). This is what makes an authenticated
+  cross-origin fetch possible at all, and it is deliberately narrow here: one
+  host, kept configurable in code so other institutions can be added without
+  the extension ever asking for `<all_urls>`.
+
+### The service worker (`background.service_worker`)
+
+The extension's background context. In MV3 it is a **service worker**, not the
+persistent background page of MV2, which means:
+
+- It is **terminated when idle** (roughly 30s) and restarted on the next event.
+  Anything held in a module-level variable is gone after that. State that must
+  survive belongs in `chrome.storage`.
+- It has **no DOM**. No `window`, no `document`, no `localStorage`.
+- Its origin is `chrome-extension://<id>`, so every Canvas call is
+  cross-origin.
+
+It is the right home for work that must outlive a popup: fetching, caching,
+and — later — scheduled refreshes.
+
+### Content scripts
+
+JavaScript injected into a web page. Two properties matter:
+
+- They run in an **isolated world**: a separate JS heap from the page, so the
+  page's variables and the content script's cannot collide or be read across.
+- They share the page's **origin** for network purposes. A `fetch` from a
+  content script on `canvas.cornell.edu` is same-origin, and carries cookies
+  exactly as Canvas's own front-end does.
+
+That second property is why they are a candidate for the auth path at all.
+
+They can be declared statically in the manifest, or injected on demand with
+`chrome.scripting.executeScript` — which is what the spike uses, since it needs
+to inject only at the moment of measurement.
+
+### The popup (`action.default_popup`)
+
+An ordinary HTML page at a `chrome-extension://` URL, shown when the toolbar
+icon is clicked. Its JavaScript context is **created on open and destroyed on
+close** — so an in-flight `fetch` started by the popup is cancelled when the
+popup closes. That is the reason to delegate work to the service worker even
+though the popup has identical origin and permissions.
+
+### Extension pages
+
+Any other HTML page the extension ships, opened in a normal tab via
+`chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") })`. Same
+origin and permissions as the popup, but a full tab's worth of space and a
+lifetime that does not end when focus moves. The "Upcoming" view is one of
+these.
+
+### How they pass messages
+
+One bus, `chrome.runtime`:
+
+```js
+// Popup / content script / extension page — the sender:
+const reply = await chrome.runtime.sendMessage({ type: "RUN_SPIKE" });
+
+// Service worker — the receiver:
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "RUN_SPIKE") return false;
+  (async () => {
+    sendResponse(await doTheWork());
+  })();
+  return true; // <- keeps the channel open for the async reply
+});
+```
+
+**That `return true` is the single most common MV3 bug.** Without it, Chrome
+closes the message channel as soon as the listener returns, and the async
+`sendResponse` lands nowhere. The failure is silent: the sender's promise
+resolves to `undefined`, with no error in either console.
+
+Messages are structured-cloned, so only plain data crosses — no functions, no
+class instances, no `Response` objects. This is why the spike's probe returns a
+flat object of primitives rather than the `Response` it got.
+
+---
+
+## The auth spike
+
+**Question:** when the extension calls `/api/v1`, does the Canvas session
+cookie attach — and from which context?
+
+**Why it is not obvious.** Cornell's Canvas sets its cookies with **no
+`SameSite` attribute**:
+
+```
+set-cookie: _csrf_token=<value>; path=/; secure
+```
+
+Chrome's default for a cookie with no `SameSite` is `Lax`, and `Lax` cookies
+are **not** sent on cross-site subresource requests — which is what a
+`fetch` from `chrome-extension://<id>` to `canvas.cornell.edu` looks like on
+its face. Chrome does grant extensions a same-site context for hosts they hold
+permissions for, but that behaviour has shifted across Chrome versions and is
+not something to build a product on from memory.
+
+A second discovery from probing the login flow: Cornell bounces unauthenticated
+requests to **`login.canvas.cornell.edu`**, a *different host* from
+`canvas.cornell.edu`:
+
+```
+$ curl -sSI https://canvas.cornell.edu/login
+HTTP/2 302
+location: https://login.canvas.cornell.edu
+```
+
+So the extension will hold permission for the API host but deliberately not for
+the login host. An expired session therefore does not surface as a clean `401`
+— it surfaces as a redirect to a host we cannot read, which is a *good* outcome
+(it makes expiry unmistakable) but has to be handled deliberately. This is the
+same failure mode as the CLI's D13, arriving by a different route.
+
+**Design.** `spike/` is a throwaway MV3 extension with no build step. It runs
+three tests and reports structured results:
+
+| Test | Context | What it settles |
+| --- | --- | --- |
+| A | Service worker `fetch` | Does a cross-origin extension fetch carry the session cookie? |
+| B | Content script in a Canvas tab | Does the same-origin path work? (Expected yes.) |
+| C | `Link` header read | Is pagination metadata visible, or stripped by CORS? |
+
+Tests A and B each run **twice** — `credentials: "include"` and
+`credentials: "omit"`. A pass with `include` proves nothing on its own; it only
+means something if `omit` fails, since otherwise the endpoint might not require
+auth at all.
+
+**Why the answer matters.** If A works, the architecture is simple: the service
+worker owns all fetching, works with no Canvas tab open, and can refresh in the
+background. If only B works, every request must be proxied through a content
+script in an open Canvas tab — which means the extension cannot refresh unless
+the user happens to have Canvas open, and the design needs an entirely
+different story for background refresh.
+
+*Results to be recorded here once the spike has been run.*
+
+---
+
+## Loading from WSL
+
+Chrome runs on Windows; the source lives in WSL. Chrome loads unpacked
+extensions unreliably from `\\wsl.localhost\` UNC paths — it will sometimes
+accept the folder and then fail to pick up changed files, which produces
+confusing "why didn't my edit apply" sessions.
+
+Builds are therefore staged onto the Windows filesystem:
+
+```bash
+./dev/sync-to-windows.sh extension/spike
+# -> C:\Users\gavin\canvas-archiver-ext\spike
+```
+
+`rsync --delete`, so a file removed from source does not linger in the loaded
+extension. Re-run after each build, then hit the reload arrow on
+`chrome://extensions`.
+
+---
+
+## Types
+
+`src/types/canvas.ts` defines `Course` and `Task` before any UI consumes them,
+because a future scheduler reads `Task` directly.
+
+**`Task` is anything with a due date** — assignments, quizzes and discussions.
+Pages, files and announcements never carry one, so they are not tasks. The
+scheduling fields (`dueAt`, `unlockAt`, `lockAt`, `pointsPossible`,
+`submission`) are first-class, never buried in a rendered description.
+
+`TaskStatus` is **derived, not stored**, because the answer depends on the
+current time: an unsubmitted task only becomes "overdue" once its due date has
+passed. It is recomputed on read.

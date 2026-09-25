@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas auth spike</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        width: 460px;
+        margin: 0;
+        padding: 14px;
+        font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      p.sub { margin: 0 0 12px; opacity: 0.7; font-size: 12px; }
+      button {
+        font: inherit; font-weight: 600; padding: 7px 14px;
+        border-radius: 6px; border: 1px solid currentColor;
+        background: transparent; cursor: pointer;
+      }
+      button[disabled] { opacity: 0.5; cursor: default; }
+      .test { margin-top: 14px; border-top: 1px solid rgba(128,128,128,.35); padding-top: 10px; }
+      .test h2 { font-size: 13px; margin: 0 0 2px; }
+      .test .detail { font-size: 11px; opacity: 0.7; margin: 0 0 8px; }
+      .row {
+        display: grid; grid-template-columns: 74px 1fr;
+        gap: 8px; padding: 5px 0; align-items: start;
+      }
+      .verdict { font-weight: 700; }
+      .yes { color: #15803d; }
+      .no  { color: #b91c1c; }
+      .skip { color: #a16207; }
+      pre {
+        margin: 4px 0 0; padding: 6px; font-size: 11px;
+        background: rgba(128,128,128,.12); border-radius: 4px;
+        white-space: pre-wrap; word-break: break-all;
+      }
+      #out:empty::before { content: "Not run yet."; opacity: 0.6; }
+    </style>
+  </head>
+  <body>
+    <h1>Canvas auth spike</h1>
+    <p class="sub">
+      Does the Canvas session cookie attach to <code>/api/v1</code> calls, and
+      from where?
+    </p>
+    <button id="run">Run spike</button>
+    <div id="out"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
