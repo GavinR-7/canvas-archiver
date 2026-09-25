@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/*
+ * Extension surfaces render inside Chrome's own chrome, so they follow the
+ * browser's colour scheme rather than imposing one.
+ */
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+}

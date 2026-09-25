@@ -8,6 +8,8 @@ what transfers, what is new, and how the MV3 pieces fit together.
 - [What carries over from the CLI](#what-carries-over-from-the-cli)
 - [MV3 in the shape this project needs it](#mv3-in-the-shape-this-project-needs-it)
 - [The auth spike](#the-auth-spike)
+- [Build setup](#build-setup)
+- [Data flow](#data-flow)
 - [Loading from WSL](#loading-from-wsl)
 - [Types](#types)
 
@@ -251,6 +253,89 @@ different story for background refresh.
 
 ---
 
+## Build setup
+
+**WXT**, chosen over Vite + CRXJS and over a hand-rolled Vite config.
+
+The deciding factor was maintenance health: CRXJS has stalled before and its
+v2 has been in beta a long time, and a build plugin going unmaintained under a
+project is an expensive problem to discover late. WXT is actively released and
+its service-worker auto-reload removes real friction, which matters more than
+usual here because every reload also crosses the WSL→Windows boundary.
+
+The cost is one abstraction between the source and Chrome's documentation. It
+is smaller than it looks: `wxt.config.ts` contains the real manifest fields as
+a typed object, and the generated result is readable at
+`.output/chrome-mv3/manifest.json` — worth looking at, since it is the file
+Chrome actually parses.
+
+`host_permissions` is *not* written in `wxt.config.ts`. It is imported from
+`src/config/canvas.ts`, which is also what the runtime reads:
+
+```ts
+export const CANVAS_ORIGINS = ["https://canvas.cornell.edu"] as const;
+export const hostPermissions = CANVAS_ORIGINS.map((o) => `${o}/*`);
+```
+
+So adding an institution is a one-line change that updates the manifest and the
+client together, and the extension never has to ask for `<all_urls>`.
+
+---
+
+## Data flow
+
+```
+  ┌────────────┐  GET_SNAPSHOT / REFRESH   ┌──────────────────┐
+  │   popup    │ ─────────────────────────▶│                  │
+  └────────────┘ ◀───────── Snapshot ──────│  service worker  │
+  ┌────────────┐                           │                  │
+  │  upcoming  │ ─────────────────────────▶│  · fetches       │──▶ Canvas /api/v1
+  │   (page)   │ ◀───────── Snapshot ──────│  · caches        │
+  └────────────┘                           └──────────────────┘
+                                                    │
+                                            chrome.storage.local
+```
+
+Three decisions worth stating:
+
+**One `Snapshot`, not several endpoints.** The UI asks for user, courses and
+tasks together. That makes rendering atomic — there is no intermediate state
+where courses have arrived but tasks have not, and no loading spinner per
+section.
+
+**Errors are a field on the snapshot, not a thrown exception.** Messages are
+structured-cloned, and a thrown `Error` crossing `sendMessage` arrives as
+`undefined`. Carrying `error` as data also allows the useful case of showing
+stale cached data *with* a warning, rather than going blank on a failed
+refresh.
+
+**All fetching lives in the service worker.** The popup could fetch — same
+origin, same permissions — but a popup's JS context is destroyed when it
+closes, cancelling any in-flight request with it. Work started in the worker
+survives the popup being dismissed.
+
+### Why `/planner/items` and not three endpoints per course
+
+"Everything due in the next 14 days" could be assembled from
+`/courses/:id/assignments`, `/courses/:id/quizzes` and
+`/courses/:id/discussion_topics` — three requests per course, so 15 for five
+courses.
+
+`GET /api/v1/planner/items?start_date=…&end_date=…` is **user-scoped**: one
+request covers every course. It also returns exactly the things that carry a
+date, already merged, with the current user's submission state attached. For
+this view it is both cheaper and a closer fit.
+
+Two shapes to know about, both handled in `normalize.ts`:
+
+- `plannable_type` includes things that are not tasks — `wiki_page`,
+  `planner_note`, `calendar_event`, `assessment_request` — which are dropped.
+- **`submissions` is sometimes the boolean `false`**, not an object, for items
+  with no submission concept. Coercing that into an object would invent a
+  submission that does not exist, so it maps to `null`.
+
+---
+
 ## Loading from WSL
 
 Chrome runs on Windows; the source lives in WSL. Chrome loads unpacked
@@ -261,13 +346,19 @@ confusing "why didn't my edit apply" sessions.
 Builds are therefore staged onto the Windows filesystem:
 
 ```bash
-./dev/sync-to-windows.sh extension/spike
-# -> C:\Users\gavin\canvas-archiver-ext\spike
+cd extension && npm run build:load
+# builds, then rsyncs to C:\Users\gavin\canvas-archiver-ext\canvas-archiver
 ```
 
 `rsync --delete`, so a file removed from source does not linger in the loaded
-extension. Re-run after each build, then hit the reload arrow on
-`chrome://extensions`.
+extension. After each run, hit the reload arrow on `chrome://extensions`.
+
+The spike is staged the same way:
+
+```bash
+./dev/sync-to-windows.sh extension/spike
+# -> C:\Users\gavin\canvas-archiver-ext\spike
+```
 
 ---
 
