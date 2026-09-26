@@ -9,8 +9,9 @@
 
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { taskStatus } from "@/src/lib/task-status";
-import { relativeDay } from "@/src/lib/time";
+import { describeDue } from "@/src/lib/time";
 import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
+import { useNow } from "@/src/ui/useNow";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
 /** Open the full-page view in a normal tab. */
@@ -21,12 +22,20 @@ function openUpcoming() {
 
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
+  const now = useNow();
   const { user, courses, tasks, error } = snapshot;
 
-  const dueSoon = tasks.filter((task) => {
-    const status = taskStatus(task);
+  const needsAttention = tasks.filter((task) => {
+    const status = taskStatus(task, now);
     return status === "due-soon" || status === "overdue" || status === "missing";
   });
+
+  // The *soonest upcoming* item, which is not the same as the first item that
+  // needs attention: `missing` has no time bound, so the ascending sort puts
+  // the oldest overdue thing first. Calling that one "next" was backwards.
+  const nextUp = tasks.find(
+    (task) => task.dueAt !== null && new Date(task.dueAt).getTime() >= now.getTime(),
+  );
 
   return (
     <div className="w-[360px] bg-white p-4 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
@@ -57,11 +66,11 @@ export default function App() {
         <Spinner label="Loading your courses…" />
       ) : (
         <>
-          {dueSoon.length > 0 && (
+          {needsAttention.length > 0 && (
             <p className="mb-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-              <strong>{dueSoon.length}</strong>{" "}
-              {dueSoon.length === 1 ? "item needs" : "items need"} attention
-              {dueSoon[0]?.dueAt && <> — next {relativeDay(dueSoon[0].dueAt).toLowerCase()}</>}
+              <strong>{needsAttention.length}</strong>{" "}
+              {needsAttention.length === 1 ? "item needs" : "items need"} attention
+              {nextUp?.dueAt && <> · {describeDue(nextUp.dueAt, now)}</>}
             </p>
           )}
 

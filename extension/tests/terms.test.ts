@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { Course } from "@/src/types/canvas";
 import {
   UNKNOWN_TERM,
+  currentTermCode,
+  partitionByCurrentTerm,
   resolveTerm,
   termCodeFromDate,
   termCodeFromName,
@@ -74,5 +77,75 @@ describe("termSortKey", () => {
     expect([...codes].sort((a, b) => termSortKey(a) - termSortKey(b))).toEqual([
       "FA24", "SU25", "FA25", "WI26", "SP26", UNKNOWN_TERM,
     ]);
+  });
+});
+
+describe("currentTermCode", () => {
+  it.each([
+    [new Date(2026, 8, 26), "FA26"], // late September
+    [new Date(2026, 0, 15), "WI26"], // January session
+    [new Date(2026, 2, 3), "SP26"],  // March
+    [new Date(2026, 5, 20), "SU26"], // June
+  ])("maps %s to %s", (now, expected) => {
+    expect(currentTermCode(now)).toBe(expected);
+  });
+});
+
+describe("partitionByCurrentTerm", () => {
+  const course = (id: number, code: string, endAt: string | null = null): Course =>
+    ({
+      id,
+      name: `Course ${id}`,
+      courseCode: `C ${id}`,
+      term: { id: null, name: code, startAt: null, endAt, code },
+      enrollmentState: "active",
+      workflowState: "available",
+      restricted: false,
+      htmlUrl: "",
+    }) as Course;
+
+  const september2026 = new Date(2026, 8, 26);
+
+  it("keeps only the current term by default", () => {
+    // The reported bug: a 2018 orientation module is still `active` in Canvas
+    // and was showing alongside this term's courses.
+    const { current, other } = partitionByCurrentTerm(
+      [course(1, "FA26"), course(2, "FA26"), course(3, "SU18"), course(4, "SP26")],
+      september2026,
+    );
+
+    expect(current.map((c) => c.id)).toEqual([1, 2]);
+    expect(other.map((c) => c.id)).toEqual([3, 4]);
+  });
+
+  it("falls back to the newest term when none matches today", () => {
+    // Mid-August: the calendar says FA26 but enrolments are only SP26/SU26.
+    const { current } = partitionByCurrentTerm(
+      [course(1, "SP26"), course(2, "SU26")],
+      september2026,
+    );
+    expect(current.map((c) => c.id)).toEqual([2]);
+  });
+
+  it("excludes a course whose term has already ended", () => {
+    const { current, other } = partitionByCurrentTerm(
+      [course(1, "FA26"), course(2, "FA26", "2026-09-01T00:00:00Z")],
+      september2026,
+    );
+    expect(current.map((c) => c.id)).toEqual([1]);
+    expect(other.map((c) => c.id)).toEqual([2]);
+  });
+
+  it("puts undatable courses in other rather than guessing", () => {
+    const { current, other } = partitionByCurrentTerm(
+      [course(1, "FA26"), course(2, UNKNOWN_TERM)],
+      september2026,
+    );
+    expect(current.map((c) => c.id)).toEqual([1]);
+    expect(other.map((c) => c.id)).toEqual([2]);
+  });
+
+  it("returns empty partitions for no courses rather than throwing", () => {
+    expect(partitionByCurrentTerm([], september2026)).toEqual({ current: [], other: [] });
   });
 });

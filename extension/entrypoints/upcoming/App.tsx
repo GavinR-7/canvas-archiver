@@ -15,6 +15,7 @@ import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { taskStatus } from "@/src/lib/task-status";
 import { formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
+import { useNow } from "@/src/ui/useNow";
 import type { Task } from "@/src/types/canvas";
 import { EmptyState, ErrorBanner, KindBadge, Spinner, StatusBadge } from "@/src/ui/components";
 import { useSnapshot } from "@/src/ui/useSnapshot";
@@ -34,8 +35,8 @@ function groupByDay(tasks: Task[]): [string, Task[]][] {
   return [...groups.entries()];
 }
 
-function TaskRow({ task }: { task: Task }) {
-  const status = taskStatus(task);
+function TaskRow({ task, now }: { task: Task; now: Date }) {
+  const status = taskStatus(task, now);
 
   return (
     <li className="flex items-start gap-3 border-b border-zinc-200 py-3 last:border-0 dark:border-zinc-800">
@@ -66,7 +67,7 @@ function TaskRow({ task }: { task: Task }) {
         <StatusBadge status={status} />
         {task.dueAt && (
           <span className="text-[11px] text-zinc-400">
-            {relativeDistance(task.dueAt)}
+            {relativeDistance(task.dueAt, now)}
           </span>
         )}
       </div>
@@ -76,9 +77,12 @@ function TaskRow({ task }: { task: Task }) {
 
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
+  const now = useNow();
   const { tasks, error, fetchedAt, user } = snapshot;
 
-  const groups = useMemo(() => groupByDay(tasks), [tasks]);
+  // `now` is in the dependency list so grouping headings re-derive when the
+  // clock crosses midnight, not only when the data changes.
+  const groups = useMemo(() => groupByDay(tasks), [tasks, now]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -90,7 +94,7 @@ export default function App() {
               Next {UPCOMING_DAYS} days
               {user && <> · {user.name}</>}
               {fetchedAt && (
-                <> · updated {relativeDistance(fetchedAt)}</>
+                <> · updated {relativeDistance(fetchedAt, now)}</>
               )}
             </p>
           </div>
@@ -122,11 +126,11 @@ export default function App() {
             {groups.map(([day, dayTasks]) => (
               <section key={day}>
                 <h2 className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-                  {dayTasks[0]?.dueAt ? relativeDay(dayTasks[0].dueAt) : day}
+                  {dayTasks[0]?.dueAt ? relativeDay(dayTasks[0].dueAt, now) : day}
                 </h2>
                 <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
                   {dayTasks.map((task) => (
-                    <TaskRow key={task.id} task={task} />
+                    <TaskRow key={task.id} task={task} now={now} />
                   ))}
                 </ul>
               </section>
