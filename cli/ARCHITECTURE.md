@@ -41,20 +41,28 @@ needed anyway:
 The cost is that every endpoint's response shape is now our problem. That is
 mitigated by converting to dataclasses at the boundary (D7).
 
-### D3 — Read-only is enforced by construction
+### D3 — Read-only is enforced by construction *(hardened)*
 
 `CanvasHTTP` exposes `get`, `get_json` and `paginate`, and nothing else. There
 is no `post`, `put`, `patch` or `delete` to call, and the single private method
-every request funnels through asserts the method is `GET`:
+every request funnels through **raises** if the method is not `GET`:
 
 ```python
-assert method == "GET", "canvas-archiver is read-only; refusing to issue ..."
+if method != "GET":
+    raise ReadOnlyViolationError(...)
 ```
 
-There is no configuration flag that relaxes this. "This tool never writes to
-Canvas" is therefore a property of the code, checked by two tests — one
-asserting the mutating verbs are absent from the class, one asserting the
-assertion fires.
+This began life as an `assert`, which was a mistake. **`python -O` strips
+`assert` statements out of the bytecode entirely**, so the guarantee would have
+silently evaporated in exactly the kind of unattended, optimised run where it
+matters most. A security invariant cannot live in a statement the interpreter
+is allowed to delete.
+
+`ReadOnlyViolationError` deliberately does *not* subclass `CanvasHTTPError`. It
+describes a bug in this codebase rather than something Canvas did, so it must
+not be caught by the handlers that skip a failed resource and carry on. A test
+asserts that non-subclassing relationship, and another reads the source of
+`_request` to confirm the guard has not regressed to an `assert`.
 
 A pleasant side effect of GET-only: Canvas requires an `X-CSRF-Token` header for
 state-changing requests authenticated by session cookie, and we never need one.
@@ -191,6 +199,96 @@ which the CLI turns into "run `canvas-archive login` again" and exit code 4.
 
 The alternative — letting every subsequent request fail on its own — would turn
 one expired cookie into hundreds of logged warnings and a half-written archive.
+
+### D14 — Credentials only ever reach the configured Canvas host
+
+Every URL is resolved to absolute form and checked — scheme, host **and port** —
+against `CANVAS_API_URL` before any request carrying the token or cookie jar
+goes out. Non-HTTPS is refused outright, except on loopback so tests can use a
+local stub.
+
+The reason this is not paranoia: **Canvas supplies URLs that we then follow.**
+The `Link` header's `next` is an absolute URL chosen by the server. A
+compromised, misconfigured or man-in-the-middled Canvas could point it at an
+attacker's host, and the client would obligingly attach
+`Authorization: Bearer …` and send it there. Nothing else in the design
+prevents that; it is the one place where server-controlled data becomes a
+request target.
+
+Three details worth stating:
+
+- **Port is part of the comparison.** `https://canvas.cornell.edu:8443` is a
+  different service from `https://canvas.cornell.edu`. An attacker able to
+  influence a redirect target but not DNS could otherwise reach a development
+  server on the same host.
+- **Subdomains are rejected.** `evil.canvas.cornell.edu` is a different origin,
+  and a cookie scoped to the parent domain would be sent to it.
+- **The check happens where the URL is used, not earlier.** `_resolve` joins
+  the relative path *and* validates, returning the absolute string that is then
+  requested — so there is no window between validating one string and sending
+  another.
+
+The configured base is validated against itself at construction, which catches
+an `http://` `CANVAS_API_URL` at startup rather than on the first request that
+would have leaked over it.
+
+### D15 — The downloader must not use this client *(rule for future work)*
+
+Not yet implemented; recorded now because the obvious implementation is wrong
+in a way that D14 will make loudly visible.
+
+Canvas file URLs do not serve bytes. `GET /api/v1/files/:id/download`
+**302-redirects to a signed S3 URL** on an unrelated host. So a downloader
+built on `CanvasHTTP` would hit `CredentialScopeError` on the redirect — and
+the tempting fix, relaxing the host check, would be precisely the wrong move.
+
+The rule:
+
+1. **Never send Canvas credentials to a non-Canvas host.** The signed URL
+   already carries its own authorisation in the query string; the bearer token
+   or session cookie adds nothing and would be handed to a third party.
+2. **Fetch file bytes with a separate, credential-free client.** Not
+   `CanvasHTTP` — a plain `httpx.Client` with no `Authorization` header and no
+   cookie jar, following redirects freely.
+3. **Get the redirect target from Canvas first**, authenticated, then download
+   it unauthenticated. Two requests, two credentials postures.
+4. **Never log or persist the signed URL.** Its query string *is* a bearer
+   credential, time-limited but valid for anyone holding it. It must not reach
+   `archive.log` or the manifest.
+
+### D16 — What the browser profile retains, and why `logout` was incomplete
+
+`login` uses a persistent Chromium profile so Duo's "remember this device"
+survives between sign-ins. That convenience has a cost that was not documented
+until it was measured.
+
+Inspecting a real profile after one Cornell login found 20 cookies across five
+hosts:
+
+| Host | What it holds |
+| --- | --- |
+| `canvas.cornell.edu` | `canvas_session` — a **second copy** of the session, which `logout` did not touch |
+| `shibidp.cit.cornell.edu` | `__Host-shib_idp_session`, `CORNELLNETID` — **the Shibboleth SSO session** |
+| `api-*.duosecurity.com` | `browsertrust\|…`, `hac\|…` — Duo's **device-trust token** |
+| `.cornell.edu` | analytics (`_ga`, `_gid`, `nmstat`) |
+| `sso.canvaslms.com` | `last_known_canvas_host` |
+
+Eleven of those are persistent — they survive the browser closing.
+
+**The profile is more sensitive than `cookies.json`, not less.** `cookies.json`
+holds a Canvas session. The profile holds the *identity provider* session plus
+the MFA device trust, which together can mint a fresh Canvas session with no
+password and no Duo push — and the Shibboleth session is not Canvas-specific,
+so it may reach other services behind the same IdP. The profile also contains
+Chromium's `Login Data` store, in case the browser offered to save a password
+during sign-in.
+
+So `logout` now says plainly that it leaves the profile behind, and
+`logout --purge-profile` deletes it. That command refuses to act on a symlink,
+since `rmtree` through one would delete somewhere unintended.
+
+What neither option does is end the session **on Canvas's side**. Only signing
+out in a browser does that, and the CLI says so rather than implying otherwise.
 
 ---
 

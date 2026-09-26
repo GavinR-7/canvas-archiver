@@ -21,7 +21,14 @@ import typer
 from rich.table import Table
 
 from . import __version__, paths
-from .auth import AuthError, AuthMode, SessionExpiredError, forget_session, load_cookies
+from .auth import (
+    AuthError,
+    AuthMode,
+    SessionExpiredError,
+    forget_browser_profile,
+    forget_session,
+    load_cookies,
+)
 from .client import CanvasClient, CanvasClientError
 from .config import Config, ConfigError, load_config
 from .log import console, get_logger, setup_logging
@@ -180,6 +187,13 @@ def login(
 
 @app.command()
 def logout(
+    purge_profile: Annotated[
+        bool,
+        typer.Option(
+            "--purge-profile",
+            help="Also delete the browser profile, which holds the SSO and Duo state.",
+        ),
+    ] = False,
     env_file: Annotated[
         Optional[Path], typer.Option("--env-file", help="Path to a .env file.")
     ] = None,
@@ -187,19 +201,50 @@ def logout(
 ) -> None:
     """Delete the saved Canvas session from this machine.
 
-    Removes the stored cookies. It does not end the session on Canvas's side —
-    to do that, sign out from Canvas in your browser.
+    By default this removes only the stored cookie file. The persistent browser
+    profile used by `login` keeps its own copy of the Canvas session, plus the
+    Shibboleth SSO session and Duo's "remember this device" token — which
+    together can mint a fresh Canvas session with no password and no Duo push.
+
+    Use --purge-profile to delete that too. The next `login` will then need a
+    full NetID sign-in and a fresh Duo approval.
+
+    Neither option ends the session on Canvas's side. To do that, sign out of
+    Canvas in your browser.
     """
     _load(require_auth=False, env_file=env_file, verbose=verbose)
 
-    if forget_session():
-        console.print("[ok]Saved session deleted.[/ok]")
+    removed_session = forget_session()
+    console.print(
+        "[ok]Saved session deleted.[/ok]" if removed_session else "No saved session to delete."
+    )
+
+    if purge_profile:
+        try:
+            removed_profile = forget_browser_profile()
+        except AuthError as exc:
+            console.print(f"[err]{exc}[/err]")
+            raise typer.Exit(code=EXIT_CONFIG_ERROR)
+
+        if removed_profile:
+            console.print("[ok]Browser profile deleted.[/ok]")
+            console.print(
+                "[hint]SSO and Duo device-trust state are gone. The next "
+                "`login` will need a full NetID sign-in and a Duo push.[/hint]"
+            )
+        else:
+            console.print("No browser profile to delete.")
+    elif removed_session:
         console.print(
-            "[hint]This only removes the local copy. To invalidate the session "
-            "itself, sign out of Canvas in your browser.[/hint]"
+            "[warn]The browser profile still holds a copy of this session,[/warn] "
+            "along with your SSO and Duo device-trust state.\n"
+            "[hint]Run `canvas-archive logout --purge-profile` to remove it too.[/hint]"
         )
-    else:
-        console.print("No saved session to delete.")
+
+    console.print(
+        "[hint]Either way, this only removes local copies. To invalidate the "
+        "session itself, sign out of Canvas in your browser.[/hint]"
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -22,6 +22,7 @@ archive, and never printed. See :mod:`canvas_archiver.paths`.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -297,10 +298,55 @@ def build_credential(
 
 
 def forget_session(path: Path | None = None) -> bool:
-    """Delete the saved cookie jar. Returns whether a file was removed."""
+    """Delete the saved cookie jar. Returns whether a file was removed.
+
+    Note what this does **not** clear: the persistent browser profile keeps its
+    own copy of the Canvas session, plus the SSO and MFA state that would let a
+    new session be minted without re-authenticating. See
+    :func:`forget_browser_profile`.
+    """
     target = path or paths.cookie_file()
     try:
         target.unlink()
         return True
     except FileNotFoundError:
         return False
+
+
+def forget_browser_profile(path: Path | None = None) -> bool:
+    """Delete the persistent Chromium profile. Returns whether it existed.
+
+    The profile is materially more sensitive than ``cookies.json``, and this is
+    the only thing that clears it. Inspecting a real profile after one Cornell
+    login found cookies for four hosts beyond Canvas itself:
+
+    * ``canvas.cornell.edu`` — a **second copy** of the Canvas session,
+      untouched by :func:`forget_session`.
+    * ``shibidp.cit.cornell.edu`` — the **Shibboleth SSO session**
+      (``__Host-shib_idp_session``, ``CORNELLNETID``). This is the account
+      login itself, not just Canvas: it can mint a fresh Canvas session, and
+      potentially sessions for other services behind the same identity
+      provider.
+    * ``api-*.duosecurity.com`` — the Duo **"remember this device" token**
+      (``browsertrust|…``), which is an MFA bypass for this browser.
+    * ``.cornell.edu`` — analytics cookies, harmless but not ours to keep.
+
+    The profile also contains Chromium's ``Login Data`` store, in case the
+    browser offered to save a password during sign-in.
+
+    Deleting it means the next ``login`` requires a full NetID sign-in *and* a
+    fresh Duo push. That is the point.
+    """
+    target = path or paths.browser_profile_dir()
+    if not target.exists():
+        return False
+
+    # A stray symlink here would make rmtree delete somewhere unintended.
+    if target.is_symlink():
+        raise AuthError(
+            f"Refusing to delete {target}: it is a symlink, not a directory."
+        )
+
+    shutil.rmtree(target)
+    logger.debug("Deleted browser profile at %s", target)
+    return True

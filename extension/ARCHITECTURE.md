@@ -9,6 +9,7 @@ what transfers, what is new, and how the MV3 pieces fit together.
 - [MV3 in the shape this project needs it](#mv3-in-the-shape-this-project-needs-it)
 - [The auth spike](#the-auth-spike)
 - [Build setup](#build-setup)
+- [Credential scoping](#credential-scoping)
 - [Data flow](#data-flow)
 - [Loading from WSL](#loading-from-wsl)
 - [Types](#types)
@@ -249,7 +250,42 @@ script in an open Canvas tab — which means the extension cannot refresh unless
 the user happens to have Canvas open, and the design needs an entirely
 different story for background refresh.
 
-*Results to be recorded here once the spike has been run.*
+### Result — measured 2026-09-25
+
+**Test A (service worker fetch) passes.** The architecture is the simple one.
+
+| Test | `credentials` | Outcome |
+| --- | --- | --- |
+| A. Service worker fetch | `"include"` | **200, authenticated** — returned the signed-in user |
+| A. Service worker fetch | `"omit"` | 401 `{"status":"unauthenticated"}` |
+| B. Content script fetch | `"include"` | 200, authenticated |
+| B. Content script fetch | `"omit"` | 401 |
+| C. `Link` header | `"include"` | **Readable**, with all four rels |
+
+Four conclusions:
+
+1. **A cross-origin fetch from `chrome-extension://` does carry the Canvas
+   session cookie**, given `host_permissions` for the host. Chrome grants
+   extensions a same-site context for hosts they hold permission for, so the
+   `SameSite=Lax`-by-default concern does not bite.
+2. **`credentials: "include"` is load-bearing, not decorative.** The `"omit"`
+   probes returned a clean 401 from the same endpoint in the same context. Since
+   `fetch` defaults to `credentials: "same-origin"`, a plain `fetch(url)` from
+   the service worker would be silently unauthenticated — reading as "logged
+   out" rather than as a bug.
+3. **No content-script proxy is needed.** Test B works too, but requiring an
+   open Canvas tab would have meant no background refresh. That constraint is
+   lifted.
+4. **The `Link` header is readable**, so pagination works from the service
+   worker. This was a genuine open question: `Link` is not CORS-safelisted, and
+   a cross-origin fetch can normally read a body while being denied the header.
+   It is visible because a fetch to a host in `host_permissions` is a
+   *privileged* extension request, not subject to CORS at all.
+
+`X-Rate-Limit-Remaining` also came back as `700.0`, confirming the bucket size
+the client's `RATE_LIMIT_FLOOR` of 100 was written against.
+
+The spike extension is kept in `spike/` as the evidence for these claims.
 
 ---
 
@@ -333,6 +369,57 @@ Two shapes to know about, both handled in `normalize.ts`:
 - **`submissions` is sometimes the boolean `false`**, not an object, for items
   with no submission concept. Coercing that into an object would invent a
   submission that does not exist, so it maps to `null`.
+
+---
+
+## Credential scoping
+
+The CLI learned two rules the hard way. Both carry over, one softened by the
+browser and one sharpened by it.
+
+### Credentials only go to the configured Canvas host
+
+`assertCanvasOrigin` runs immediately before the only `fetch` in the extension,
+and again on any pagination `next` URL. Scheme, host and port must match;
+subdomains are rejected; non-HTTPS is refused except on loopback.
+
+**The browser already blocks the worst version of this attack.** Cookies are
+per-origin, so a `next` URL pointing at `evil.com` would *not* carry
+`canvas_session` — unlike the Python client, where the bearer header travels
+with whatever URL it is handed. CORS would also block reading the response.
+
+Three reasons it is still worth the one comparison per request:
+
+- **The request still fires.** A URL is an exfiltration channel on its own:
+  `https://evil.com/?data=…` leaks whatever is in the path whether or not the
+  response can be read.
+- **Other sites' cookies would be sent.** With `credentials: "include"`, a
+  request to a host the user is signed into carries *that* site's session — an
+  authenticated third-party action, triggered by Canvas.
+- It costs nothing, and the failure mode it prevents is silent.
+
+### The downloader must not send Canvas credentials to a CDN
+
+Not yet built; recorded now, because in the extension the naive version fails
+in a *different* way than in the CLI and the right answer is a different API.
+
+Canvas file URLs do not serve bytes: `GET /api/v1/files/:id/download`
+302-redirects to a signed S3 URL on an unrelated host. Consequences here:
+
+1. **`fetch` is the wrong tool.** S3 is not in `host_permissions`, so the
+   cross-origin request would be subject to CORS and would fail. Adding S3 to
+   `host_permissions` to work around that would widen the extension's reach for
+   no good reason.
+2. **`chrome.downloads.download()` is the right tool.** It hands the URL to the
+   browser's own download stack, which follows the redirect, needs no host
+   permission, and writes to the user's Downloads folder without the bytes ever
+   passing through extension code.
+3. **The signed URL is itself a credential.** Its query string authorises
+   anyone holding it until it expires. It must never be logged, persisted, or
+   written into stored data.
+4. **Ask Canvas for the redirect target authenticated; fetch the bytes
+   unauthenticated.** Two requests, two credential postures — the same rule as
+   the CLI's D15, reached by a different route.
 
 ---
 

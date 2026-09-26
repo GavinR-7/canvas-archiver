@@ -51,8 +51,15 @@ The browser profile persists, so Duo's "remember this device" survives between
 logins. When the session eventually expires, any command will stop cleanly and
 tell you to run `login` again.
 
-`canvas-archive logout` deletes the local copy. (It does not end the session on
-Canvas's side — sign out in your browser for that.)
+`canvas-archive logout` deletes the saved cookie file. Note that the browser
+profile keeps its **own** copy of the session, along with your Shibboleth SSO
+session and Duo's "remember this device" token — together enough to mint a
+fresh Canvas session with no password and no Duo push. Use
+`canvas-archive logout --purge-profile` to delete that too; the next `login`
+will then need a full NetID sign-in.
+
+Neither ends the session on Canvas's side — sign out in your browser for
+that.
 
 > **A note on what you're storing.** A session cookie is a *stronger* credential
 > than an API token: it's your whole account rather than a scoped key, and it

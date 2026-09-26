@@ -19,6 +19,7 @@ from canvas_archiver.auth import (
     Credential,
     SessionExpiredError,
     build_credential,
+    forget_browser_profile,
     forget_session,
     load_cookies,
     save_cookies,
@@ -229,3 +230,68 @@ def test_forget_session_removes_the_file(tmp_path: Path) -> None:
     assert forget_session(destination) is True
     assert not destination.exists()
     assert forget_session(destination) is False
+
+
+# --- purging the browser profile -------------------------------------------- #
+#
+# The profile is materially more sensitive than cookies.json: alongside a second
+# copy of the Canvas session it holds the Shibboleth SSO session and Duo's
+# device-trust token, which together mint a fresh Canvas session with no
+# password and no MFA prompt. These tests cover the only thing that clears it.
+
+
+def _fake_profile(root: Path) -> Path:
+    """A directory shaped like the Chromium profile Playwright leaves behind."""
+    profile = root / "browser-profile"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Cookies").write_text("sqlite-ish")
+    (profile / "Default" / "Login Data").write_text("sqlite-ish")
+    (profile / "Default" / "Local Storage").mkdir()
+    (profile / "Local State").write_text("{}")
+    return profile
+
+
+def test_forget_browser_profile_removes_the_whole_tree(tmp_path: Path) -> None:
+    profile = _fake_profile(tmp_path)
+
+    assert forget_browser_profile(profile) is True
+    assert not profile.exists()
+
+
+def test_forget_browser_profile_is_idempotent(tmp_path: Path) -> None:
+    profile = _fake_profile(tmp_path)
+
+    assert forget_browser_profile(profile) is True
+    assert forget_browser_profile(profile) is False
+
+
+def test_forget_browser_profile_reports_absence_rather_than_raising(tmp_path: Path) -> None:
+    assert forget_browser_profile(tmp_path / "never-existed") is False
+
+
+def test_forget_browser_profile_refuses_to_follow_a_symlink(tmp_path: Path) -> None:
+    """rmtree through a symlink would delete somewhere unintended."""
+    real = tmp_path / "somewhere-important"
+    real.mkdir()
+    (real / "keep-me").write_text("data")
+
+    link = tmp_path / "browser-profile"
+    link.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(AuthError, match="symlink"):
+        forget_browser_profile(link)
+
+    assert (real / "keep-me").exists()
+
+
+def test_forgetting_the_session_leaves_the_profile_alone(tmp_path: Path) -> None:
+    """The default logout is deliberately narrow -- this documents that the
+    profile survives it, which is exactly why --purge-profile exists."""
+    cookies = tmp_path / "cookies.json"
+    save_cookies(_canvas_cookies(), API_URL, cookies)
+    profile = _fake_profile(tmp_path)
+
+    forget_session(cookies)
+
+    assert not cookies.exists()
+    assert (profile / "Default" / "Cookies").exists()

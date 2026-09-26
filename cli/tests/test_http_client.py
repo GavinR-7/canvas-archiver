@@ -9,6 +9,8 @@ rather than 429 makes the last of those genuinely easy to get wrong.
 
 from __future__ import annotations
 
+import inspect
+
 import httpx
 import pytest
 
@@ -18,8 +20,11 @@ from canvas_archiver.http_client import (
     AuthenticationError,
     CanvasHTTP,
     CanvasHTTPError,
+    CredentialScopeError,
     NotFoundError,
+    ReadOnlyViolationError,
     parse_link_header,
+    validate_credential_target,
 )
 
 BASE = "https://canvas.example.edu"
@@ -88,11 +93,34 @@ def test_client_exposes_no_mutating_verbs() -> None:
         assert not hasattr(CanvasHTTP, verb), f"CanvasHTTP must not expose .{verb}()"
 
 
-def test_non_get_methods_are_refused_even_internally() -> None:
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "get"])
+def test_non_get_methods_are_refused_even_internally(method: str) -> None:
     client = _client(lambda request: httpx.Response(200, json={}))
 
-    with pytest.raises(AssertionError, match="read-only"):
+    with pytest.raises(ReadOnlyViolationError, match="read-only"):
+        client._request(method, "/api/v1/courses", None)
+
+
+def test_the_read_only_guard_is_not_an_assert() -> None:
+    """`python -O` strips assert statements, which would delete the guarantee
+    in exactly the build most likely to run unattended. So it must be a real
+    raise, and its exception must not be AssertionError."""
+    client = _client(lambda request: httpx.Response(200, json={}))
+
+    with pytest.raises(ReadOnlyViolationError) as excinfo:
         client._request("POST", "/api/v1/courses", None)
+
+    assert not isinstance(excinfo.value, AssertionError)
+
+    source = inspect.getsource(CanvasHTTP._request)
+    assert "raise ReadOnlyViolationError" in source
+    assert "assert method" not in source
+
+
+def test_read_only_violation_is_not_swallowed_as_an_api_error() -> None:
+    """It is a bug in this codebase, not a condition Canvas produced, so it
+    must not be caught by handlers that skip failed resources."""
+    assert not issubclass(ReadOnlyViolationError, CanvasHTTPError)
 
 
 def test_every_request_is_a_get() -> None:
@@ -296,3 +324,131 @@ def test_the_token_never_appears_in_an_error_message() -> None:
         client.get_json("/api/v1/users/self")
 
     assert "1234~secret" not in str(excinfo.value)
+
+
+# --- credentials only go to the configured Canvas --------------------------- #
+#
+# Canvas hands us URLs that we then follow: the `Link` header's `next` is an
+# absolute URL chosen by the server. A compromised or misconfigured Canvas
+# could point it anywhere, and the client would obligingly send the bearer
+# token or session cookie along. These tests hold that door shut.
+
+
+CANVAS = "https://canvas.cornell.edu"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://canvas.cornell.edu/api/v1/users/self",
+        "https://canvas.cornell.edu:443/api/v1/users/self",  # explicit default port
+        "https://CANVAS.CORNELL.EDU/api/v1/users/self",  # DNS is case-insensitive
+        "https://canvas.cornell.edu/api/v1/courses?page=2&per_page=100",
+    ],
+)
+def test_validate_accepts_the_configured_host(url: str) -> None:
+    assert validate_credential_target(url, CANVAS) == url
+
+
+@pytest.mark.parametrize(
+    ("url", "why"),
+    [
+        ("https://evil.example.com/api/v1/users/self", "a different host"),
+        ("https://canvas.cornell.edu.evil.com/api/v1", "a suffix-matching host"),
+        ("https://evil.canvas.cornell.edu/api/v1", "a subdomain"),
+        ("https://canvas.cornell.edu:8443/api/v1", "a different port"),
+        ("http://canvas.cornell.edu/api/v1", "plain HTTP"),
+        ("file:///etc/passwd", "a non-HTTP scheme"),
+        ("ftp://canvas.cornell.edu/x", "a non-HTTP scheme"),
+        ("https:///api/v1/users/self", "no host at all"),
+    ],
+)
+def test_validate_refuses_everything_else(url: str, why: str) -> None:
+    with pytest.raises(CredentialScopeError):
+        validate_credential_target(url, CANVAS)
+
+
+def test_subdomains_are_rejected_because_cookies_would_reach_them() -> None:
+    """A cookie scoped to .cornell.edu would be sent to any subdomain, so an
+    attacker controlling one could collect it. Different origin, no exception."""
+    with pytest.raises(CredentialScopeError, match="Refusing to send Canvas credentials"):
+        validate_credential_target("https://evil.canvas.cornell.edu/api/v1", CANVAS)
+
+
+def test_loopback_may_use_plain_http_so_tests_can_run_locally() -> None:
+    for base in ("http://localhost:8080", "http://127.0.0.1:9000"):
+        assert validate_credential_target(f"{base}/api/v1/users/self", base)
+
+
+def test_loopback_exemption_does_not_leak_to_other_hosts() -> None:
+    """The HTTP exemption is per-host, not a global 'allow http' switch."""
+    with pytest.raises(CredentialScopeError, match="plain HTTP"):
+        validate_credential_target("http://canvas.cornell.edu/api/v1", "http://localhost:8080")
+
+
+def test_a_malformed_port_is_rejected_rather_than_ignored() -> None:
+    with pytest.raises(CredentialScopeError, match="Malformed port"):
+        validate_credential_target("https://canvas.cornell.edu:notaport/api", CANVAS)
+
+
+def test_constructor_rejects_a_plain_http_canvas_url() -> None:
+    """Caught at startup, not on the first request that leaks over it."""
+    credential = Credential(mode=AuthMode.TOKEN, headers={"Authorization": "Bearer x"})
+
+    with pytest.raises(CredentialScopeError, match="plain HTTP"):
+        CanvasHTTP("http://canvas.cornell.edu", credential)
+
+
+def test_an_absolute_off_host_url_is_refused_before_the_request_is_made() -> None:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={})
+
+    client = _client(handler)
+
+    with pytest.raises(CredentialScopeError):
+        client.get_json("https://evil.example.com/api/v1/users/self")
+
+    # The decisive assertion: nothing left the process.
+    assert sent == []
+
+
+def test_a_pagination_link_pointing_off_host_stops_the_run() -> None:
+    """The attack this guards against: Canvas controls the `next` URL."""
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            200,
+            json=[{"id": 1}],
+            headers={"Link": '<https://evil.example.com/steal?p=2>; rel="next"'},
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(CredentialScopeError, match="pagination link pointing off-host"):
+        list(client.paginate("/api/v1/courses"))
+
+    # The first page was fetched from Canvas; the second was never attempted.
+    assert len(requested) == 1
+    assert requested[0].startswith(BASE)
+
+
+def test_a_same_host_pagination_link_is_still_followed() -> None:
+    """The guard must not break ordinary pagination."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("page") != "2":
+            return httpx.Response(
+                200,
+                json=[{"id": 1}],
+                headers={"Link": f'<{BASE}/api/v1/courses?page=2>; rel="next"'},
+            )
+        return httpx.Response(200, json=[{"id": 2}])
+
+    client = _client(handler)
+
+    assert [item["id"] for item in client.paginate("/api/v1/courses")] == [1, 2]

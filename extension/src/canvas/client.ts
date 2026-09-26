@@ -32,6 +32,7 @@ import {
   SessionExpiredError,
 } from "./errors";
 import { parseLinkHeader } from "./link-header";
+import { assertCanvasOrigin, CredentialScopeError } from "./url-guard";
 
 /** Canvas's maximum page size. The default of 10 would decuple our requests. */
 export const MAX_PER_PAGE = 100;
@@ -101,6 +102,11 @@ export interface CanvasResponse<T> {
  * CLI, and `fetch` appears nowhere else in the extension.
  */
 async function canvasFetch(url: string): Promise<Response> {
+  // Checked immediately before the only fetch in the extension, so there is no
+  // gap between validating a URL and using it. See `url-guard.ts` for why this
+  // is worth doing even though cookies are already per-origin.
+  assertCanvasOrigin(url);
+
   return fetch(url, {
     method: "GET",
     // `fetch` defaults to `credentials: "same-origin"`. From the service
@@ -250,6 +256,19 @@ export async function getAll<T>(
       const wrapped = (payload as Record<string, unknown>)["items"];
       if (Array.isArray(wrapped)) items.push(...(wrapped as T[]));
       else items.push(payload as T);
+    }
+
+    // The `next` URL is chosen by the server. canvasFetch would reject an
+    // off-host one anyway; checking here names pagination as the source.
+    if (response.nextUrl) {
+      try {
+        assertCanvasOrigin(response.nextUrl);
+      } catch (error) {
+        throw new CredentialScopeError(
+          `Canvas returned a pagination link pointing off-host while reading ${path}. ` +
+            String(error),
+        );
+      }
     }
 
     url = response.nextUrl;

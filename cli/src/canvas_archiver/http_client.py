@@ -10,13 +10,23 @@ leaves this process with a method other than ``GET``.
 Named ``http_client`` rather than ``http`` so it cannot shadow the standard
 library package.
 
-Read-only by construction
--------------------------
-:class:`CanvasHTTP` exposes no ``post``, ``put``, ``patch`` or ``delete``, and
-the single private method every request funnels through asserts the method is
-``GET``. There is no configuration flag that relaxes this. "This tool never
-writes to Canvas" is therefore a property of the code rather than a promise in
-the README.
+Two guarantees, both enforced at runtime
+----------------------------------------
+**Read-only.** :class:`CanvasHTTP` exposes no ``post``, ``put``, ``patch`` or
+``delete``, and the single private method every request funnels through raises
+:class:`ReadOnlyViolationError` if the method is not ``GET``. This is a real
+``if``/``raise``, not an ``assert``: ``assert`` statements are compiled out
+entirely under ``python -O``, which would silently remove the guarantee in
+exactly the deployment where it matters most.
+
+**Credentials only ever reach the configured Canvas host.** Every URL is
+resolved to an absolute form and checked against ``CANVAS_API_URL`` — scheme,
+host and port — before a request carrying the token or cookie jar is sent. This
+matters because Canvas supplies URLs we then follow: the ``Link`` header's
+``next`` is an absolute URL chosen by the server. A compromised or
+misconfigured Canvas could point it at an attacker's host, and without this
+check the client would obligingly send the credential there. See
+:func:`validate_credential_target`.
 """
 
 from __future__ import annotations
@@ -25,6 +35,7 @@ import random
 import re
 import time
 from typing import Any, Iterator
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -64,9 +75,35 @@ _LINK_ENTRY = re.compile(r'<(?P<url>[^>]*)>\s*;\s*rel="(?P<rel>[^"]*)"')
 
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504, 507})
 
+#: Hosts permitted to use plain HTTP. Everything else must be HTTPS, because a
+#: bearer token or session cookie sent over HTTP is readable in transit.
+#: Loopback is exempt so tests can run against a local stub server.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+#: Default ports, so ``https://host`` and ``https://host:443`` compare equal.
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
 
 class CanvasHTTPError(RuntimeError):
     """A request failed in a way the caller cannot recover from."""
+
+
+class ReadOnlyViolationError(RuntimeError):
+    """A non-GET request was attempted.
+
+    Deliberately **not** a :class:`CanvasHTTPError`: this is a bug in this
+    codebase, not a condition Canvas produced, and it should propagate loudly
+    rather than be swallowed by a handler that skips failed resources.
+    """
+
+
+class CredentialScopeError(CanvasHTTPError):
+    """A request would have sent credentials somewhere other than Canvas.
+
+    Raised before the request is made. The usual cause would be a ``Link``
+    header pointing off-host — which is not something a healthy Canvas does, so
+    it is treated as fatal rather than skipped.
+    """
 
 
 class AuthenticationError(CanvasHTTPError):
@@ -101,6 +138,71 @@ def parse_link_header(value: str | None) -> dict[str, str]:
         match.group("rel").lower(): match.group("url")
         for match in _LINK_ENTRY.finditer(value)
     }
+
+
+def _origin_of(url: str) -> tuple[str, str, int]:
+    """Return ``(scheme, host, port)`` with the default port made explicit.
+
+    Hostnames are lower-cased, since DNS is case-insensitive but string
+    comparison is not.
+    """
+    parts = urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+
+    try:
+        port = parts.port
+    except ValueError as exc:
+        # urlsplit tolerates a malformed port until you ask for it.
+        raise CredentialScopeError(f"Malformed port in URL: {url!r}") from exc
+
+    return scheme, host, port or _DEFAULT_PORTS.get(scheme, 0)
+
+
+def validate_credential_target(url: str, expected_base: str) -> str:
+    """Confirm *url* is safe to send Canvas credentials to. Returns *url*.
+
+    Checks, in order:
+
+    1. The URL is absolute and uses ``http`` or ``https``.
+    2. It is HTTPS, unless the host is loopback (for tests).
+    3. Its scheme, host **and port** all match *expected_base*.
+
+    Port is included deliberately. ``https://canvas.cornell.edu:8443`` is a
+    different service from ``https://canvas.cornell.edu``, and an attacker who
+    can influence a redirect target but not DNS could otherwise reach a
+    development server on the same host.
+
+    Subdomains are **not** accepted. ``evil.canvas.cornell.edu`` is a different
+    origin, and cookies scoped to the parent domain would be sent to it.
+
+    Raises:
+        CredentialScopeError: If any check fails.
+    """
+    scheme, host, port = _origin_of(url)
+
+    if scheme not in ("http", "https"):
+        raise CredentialScopeError(
+            f"Refusing to send credentials to a non-HTTP(S) URL: {url!r}"
+        )
+    if not host:
+        raise CredentialScopeError(f"Refusing to send credentials to {url!r}: no host.")
+    if scheme != "https" and host not in LOOPBACK_HOSTS:
+        raise CredentialScopeError(
+            f"Refusing to send credentials over plain HTTP to {host}. "
+            "A token or session cookie is readable in transit."
+        )
+
+    expected = _origin_of(expected_base)
+    if (scheme, host, port) != expected:
+        raise CredentialScopeError(
+            f"Refusing to send Canvas credentials to {scheme}://{host}:{port} — "
+            f"configured Canvas is {expected[0]}://{expected[1]}:{expected[2]}.\n"
+            "This can happen if a pagination Link header points off-host, which "
+            "a healthy Canvas does not do."
+        )
+
+    return url
 
 
 def _looks_like_a_login_page(response: httpx.Response) -> bool:
@@ -167,6 +269,11 @@ class CanvasHTTP:
         self.credential = credential
         self.max_retries = max_retries
 
+        # Validate the configured host against itself. This catches a
+        # misconfigured CANVAS_API_URL -- an http:// one, say -- at startup
+        # rather than on the first request that leaks a credential over it.
+        validate_credential_target(self.base_url, self.base_url)
+
         headers = {
             "Accept": "application/json+canvas-string-ids, application/json",
             "User-Agent": user_agent,
@@ -196,18 +303,35 @@ class CanvasHTTP:
 
     # -- the single request path -------------------------------------------- #
 
+    def _resolve(self, url: str) -> str:
+        """Resolve *url* against the base and confirm it is a safe target.
+
+        Relative paths are joined here rather than left to httpx, so that the
+        string which gets validated is exactly the string that gets requested.
+        Validating a relative path and then letting the transport resolve it
+        would leave a gap between the check and the use.
+        """
+        absolute = str(httpx.URL(self.base_url).join(url))
+        return validate_credential_target(absolute, self.base_url)
+
     def _request(self, method: str, url: str, params: dict[str, Any] | None) -> httpx.Response:
         """Issue one request, with retries. The only place a request is made.
 
         Raises:
-            AssertionError: If *method* is not ``GET``. This is the read-only
-                guarantee, and it is deliberately not catchable configuration.
+            ReadOnlyViolationError: If *method* is not ``GET``.
+            CredentialScopeError: If *url* resolves outside the configured
+                Canvas host.
         """
-        assert method == "GET", (
-            f"canvas-archiver is read-only; refusing to issue {method}. "
-            "This is a bug, not a setting."
-        )
+        # An explicit raise, not an assert: `python -O` strips assert
+        # statements outright, which would delete this guarantee in precisely
+        # the build most likely to be running unattended.
+        if method != "GET":
+            raise ReadOnlyViolationError(
+                f"canvas-archiver is read-only; refusing to issue {method} to {url!r}. "
+                "This is a bug, not a setting."
+            )
 
+        url = self._resolve(url)
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
@@ -401,4 +525,16 @@ class CanvasHTTP:
             links = parse_link_header(response.headers.get("link"))
             url = links.get("next")
             if url:
+                # The `next` URL is chosen by the server, so it is checked
+                # before it is followed. _request would catch this too; failing
+                # here gives a message that names pagination as the source.
+                try:
+                    validate_credential_target(
+                        str(httpx.URL(self.base_url).join(url)), self.base_url
+                    )
+                except CredentialScopeError as exc:
+                    raise CredentialScopeError(
+                        f"Canvas returned a pagination link pointing off-host "
+                        f"while reading {path}. {exc}"
+                    ) from exc
                 logger.debug("Following pagination to page %d of %s", page + 1, path)
