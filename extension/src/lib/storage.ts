@@ -13,7 +13,7 @@
 
 import { EMPTY_SNAPSHOT, type Snapshot } from "./messages";
 
-const SNAPSHOT_KEY = "snapshot.v1";
+const SNAPSHOT_KEY = "snapshot.v2";
 
 /** Read the cached snapshot, or an empty one if nothing is stored. */
 export async function loadSnapshot(): Promise<Snapshot> {
