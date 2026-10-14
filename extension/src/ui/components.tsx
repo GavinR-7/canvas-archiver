@@ -29,6 +29,16 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
   );
 }
 
+/** Shown only for sources other than Canvas, which is the unmarked default. */
+export function SourceBadge({ source }: { source: Task["source"] }) {
+  if (source === "canvas") return null;
+  return (
+    <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">
+      Gradescope
+    </span>
+  );
+}
+
 const KIND_LABELS: Record<Task["kind"], string> = {
   assignment: "Assignment",
   quiz: "Quiz",
@@ -52,9 +62,12 @@ export function KindBadge({ kind }: { kind: Task["kind"] }) {
 export function ErrorBanner({
   error,
   canvasOrigin,
+  service = "Canvas",
 }: {
   error: SnapshotError;
+  /** Where "sign in" should send the user. Named for Canvas, used for both. */
   canvasOrigin: string;
+  service?: "Canvas" | "Gradescope";
 }) {
   const expired = error.kind === "session-expired";
 
@@ -68,7 +81,7 @@ export function ErrorBanner({
       }`}
     >
       <p className="font-medium">
-        {expired ? "You're signed out of Canvas" : "Couldn't reach Canvas"}
+        {expired ? `You're signed out of ${service}` : `Couldn't reach ${service}`}
       </p>
       <p className="mt-1 opacity-90">{error.message}</p>
       {expired && (
@@ -78,7 +91,7 @@ export function ErrorBanner({
           rel="noreferrer"
           className="mt-2 inline-block font-medium underline underline-offset-2"
         >
-          Open Canvas and sign in →
+          Open {service} and sign in →
         </a>
       )}
     </div>

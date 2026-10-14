@@ -186,6 +186,7 @@ export function normalizePlannerItem(
 
   const task: Task = {
     id: `${kind}:${canvasId}`,
+    source: "canvas",
     canvasId,
     kind,
     title: str(plannable["title"]) || str(raw["plannable_type"]) || "Untitled",

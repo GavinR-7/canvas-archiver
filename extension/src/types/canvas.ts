@@ -85,6 +85,13 @@ export interface Course {
  */
 export type TaskKind = "assignment" | "quiz" | "discussion";
 
+/**
+ * Which system a task came from. Canvas is not the only place coursework is
+ * posted: some courses (CS 3700 at Cornell) publish assignments only on
+ * Gradescope, which has no public API for students.
+ */
+export type TaskSource = "canvas" | "gradescope";
+
 /** Canvas's `workflow_state` for the current user's submission. */
 export type SubmissionWorkflowState =
   | "submitted"
@@ -138,8 +145,13 @@ export type TaskStatus =
  * fields are first-class rather than buried in a rendered description.
  */
 export interface Task {
-  /** Stable composite key, e.g. `"assignment:4821993"`. Unique across kinds. */
+  /**
+   * Stable composite key. Canvas: `"assignment:4821993"`; Gradescope:
+   * `"gradescope:5512"`. Unique across kinds and sources.
+   */
   id: string;
+  source: TaskSource;
+  /** The id in the source system (named for Canvas, which came first). */
   canvasId: number;
   kind: TaskKind;
   title: string;

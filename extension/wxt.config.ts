@@ -1,6 +1,7 @@
 import { defineConfig } from "wxt";
 import tailwindcss from "@tailwindcss/vite";
 import { hostPermissions } from "./src/config/canvas";
+import { gradescopeHostPermissions } from "./src/config/gradescope";
 
 /**
  * WXT generates `manifest.json` from this object plus the files in
@@ -21,7 +22,7 @@ export default defineConfig({
     // `storage` is the only capability API needed so far. Note what is absent:
     // no `tabs`, no `<all_urls>`, no `webRequest`.
     permissions: ["storage"],
-    host_permissions: hostPermissions,
+    host_permissions: [...hostPermissions, ...gradescopeHostPermissions],
     action: {
       default_title: "Canvas Archiver",
     },

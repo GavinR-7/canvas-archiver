@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
+import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { taskStatus } from "@/src/lib/task-status";
 import { describeDue } from "@/src/lib/time";
 import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
@@ -23,7 +24,7 @@ function openUpcoming() {
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
-  const { user, courses, tasks, error } = snapshot;
+  const { user, courses, tasks, error, gradescopeError } = snapshot;
 
   const needsAttention = tasks.filter((task) => {
     const status = taskStatus(task, now);
@@ -59,6 +60,12 @@ export default function App() {
       {error && (
         <div className="mb-3">
           <ErrorBanner error={error} canvasOrigin={DEFAULT_CANVAS_ORIGIN} />
+        </div>
+      )}
+
+      {gradescopeError && (
+        <div className="mb-3">
+          <ErrorBanner error={gradescopeError} canvasOrigin={GRADESCOPE_ORIGIN} service="Gradescope" />
         </div>
       )}
 

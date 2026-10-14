@@ -18,7 +18,13 @@
  * request with it. Work started here survives the popup being dismissed.
  */
 
-import { fetchActiveCourses, fetchUpcomingTasks, fetchUser } from "@/src/canvas/api";
+import {
+  fetchActiveCourses,
+  fetchUpcomingTasks,
+  fetchUser,
+  UPCOMING_DAYS,
+} from "@/src/canvas/api";
+import { byDueDate } from "@/src/lib/task-status";
 import { CanvasError, SessionExpiredError } from "@/src/canvas/errors";
 import {
   EMPTY_SNAPSHOT,
@@ -26,6 +32,7 @@ import {
   type Snapshot,
   type SnapshotError,
 } from "@/src/lib/messages";
+import { fetchGradescopeTasks } from "@/src/gradescope/api";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -40,7 +47,7 @@ const STALE_AFTER_MS = 10 * 60 * 1000;
  */
 let inFlight: Promise<Snapshot> | null = null;
 
-function describeError(error: unknown): SnapshotError {
+function describeError(error: unknown, service = "Canvas"): SnapshotError {
   if (error instanceof SessionExpiredError) {
     return { kind: "session-expired", message: error.message };
   }
@@ -52,7 +59,7 @@ function describeError(error: unknown): SnapshotError {
     // redirect to a host this extension has no permission for.
     return {
       kind: "network",
-      message: "Could not reach Canvas. Check your connection and that you're signed in.",
+      message: `Could not reach ${service}. Check your connection and that you're signed in.`,
     };
   }
   return { kind: "other", message: String(error) };
@@ -62,18 +69,33 @@ function describeError(error: unknown): SnapshotError {
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
 
+  // Gradescope runs alongside Canvas and fails independently. Its tasks from
+  // the previous fetch are kept on failure so a flaky page doesn't blank them.
+  const gradescope = fetchGradescopeTasks(UPCOMING_DAYS).then(
+    (tasks) => ({ tasks, error: null as SnapshotError | null }),
+    (error: unknown) => {
+      console.warn("[canvas-archiver] gradescope refresh failed", error);
+      return {
+        tasks: previous.tasks.filter((task) => task.source === "gradescope"),
+        error: describeError(error, "Gradescope"),
+      };
+    },
+  );
+
   try {
     // Courses first: tasks are labelled with their course name, so the lookup
     // has to exist before planner items are normalised.
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
     const tasks = await fetchUpcomingTasks(courses);
 
+    const gs = await gradescope;
     const snapshot: Snapshot = {
       user,
       courses,
-      tasks,
+      tasks: [...tasks, ...gs.tasks].sort(byDueDate),
       fetchedAt: new Date().toISOString(),
       error: null,
+      gradescopeError: gs.error,
     };
     await saveSnapshot(snapshot);
     return snapshot;
@@ -81,7 +103,14 @@ async function refresh(): Promise<Snapshot> {
     console.warn("[canvas-archiver] refresh failed", error);
     // Keep whatever was cached and attach the error, so the UI can show stale
     // data with a warning rather than going blank.
-    const failed: Snapshot = { ...previous, error: describeError(error) };
+    const gs = await gradescope;
+    const failed: Snapshot = {
+      ...previous,
+      // Canvas data is stale, but a fresh Gradescope result is still good.
+      tasks: [...previous.tasks.filter((task) => task.source === "canvas"), ...gs.tasks].sort(byDueDate),
+      error: describeError(error),
+      gradescopeError: gs.error,
+    };
     await saveSnapshot(failed);
     return failed;
   }
