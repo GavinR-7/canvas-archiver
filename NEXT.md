@@ -104,3 +104,9 @@ Options, none decided:
 - **Paid.** Students rarely pay for study tools; the plausible revenue is institutional (not pursued) or a paid tier on the chatbot (slice 6) if hosted. Not a near-term money path. For money, Embedded Intent work is closer to cash.
 
 Recommendation: ship slices 1–3, list it free on the Web Store, use real usage as the evidence before talking to anyone.
+
+## T-30: weekly schedule (PR `products/v2-schedule`, base v2-chat)
+Built: Week schedule page (Mon-Sun grid, 7am-11pm, classes + deadlines at Eastern time, all-day strip, unconfirmed dates in amber); paste-in importer for the schedule.md table; `schedule.json` pushed by the same opt-in sync as `due.json` (`docs/SCHEDULE_JSON.md`). 228 tests, compile and build green.
+Not verified: nothing run in a real Chrome or against gavin-data; no screenshot captured (the page needs the extension runtime); sync still needs Chrome open.
+Not done: habits (classes only), per-week exceptions/holidays, editing a meeting in place (remove and re-add).
+HQ side: Secretary reading `schedule.json` is HQ's change; suggest a pointer next to "Where due dates live" in knowledge/schedule.md (not edited by me).
