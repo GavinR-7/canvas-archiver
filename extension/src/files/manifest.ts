@@ -57,7 +57,7 @@ export function hashText(text: string): string {
  * - No entry: new.
  * - Inline items (pages etc.) are compared by the hash of their rendered text,
  *   since Canvas timestamps for them are missing or unreliable.
- * - Files are compared by Canvas's modified time and size.
+ * - Files are compared by Canvas's modified time (size if there is none).
  * - Moved (module renamed or file re-filed): changed, so the tree stays true.
  * - `onDiskSize` (archive layout only): a known file that was deleted or
  *   truncated locally is fetched again. `undefined` means "not checked".
@@ -71,7 +71,10 @@ export function decide(
   if (entry.path.join("/") !== item.path.join("/")) return "changed";
   if (onDiskSize !== undefined && onDiskSize !== entry.size) return onDiskSize === null ? "new" : "changed";
   if (item.content !== null) return entry.sha256 === hashText(item.content) ? "unchanged" : "changed";
-  return entry.modifiedAt === item.modifiedAt && entry.size === item.size ? "unchanged" : "changed";
+  // The size Canvas reports and the bytes written can differ (encodings, CDN), so
+  // size only decides when Canvas gave no modified time.
+  if (item.modifiedAt !== null) return entry.modifiedAt === item.modifiedAt ? "unchanged" : "changed";
+  return entry.size === item.size ? "unchanged" : "changed";
 }
 
 export interface SavedRecord {
