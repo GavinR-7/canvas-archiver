@@ -21,6 +21,10 @@ function openUpcoming() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") });
 }
 
+function openChat() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("chat.html") });
+}
+
 function openFiles() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("files.html") });
 }
@@ -133,6 +137,13 @@ export default function App() {
             className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
           >
             Save course files…
+          </button>
+          <button
+            type="button"
+            onClick={openChat}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Course chat…
           </button>
           <button
             type="button"
