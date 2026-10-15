@@ -42,6 +42,10 @@ Built: opt-in nightly feed (Settings → inbox folder + switch; alarm opens `fil
 
 Built: "Get everything for…" on the Files page. `src/ai/pick.ts` is pure rules (exam named in folder/file, other-numbered exams excluded, "weeks 3-6", syllabus "Prelim 2 covers lectures 10-18"), each pick with its reason; `src/ai/model.ts` is the opt-in fallback with the user's own key (names only, reply cut to ids we sent). **Unverified:** a real request on a real account; syllabus phrasing varies, so coverage detection is best-effort; the model call has never been made (no key here).
 
+## T-29 status (branch `products/v2-chat`)
+
+Built: Course chat page (popup → "Course chat…"). `src/chat/retrieve.ts` (chunk + BM25, pure), `src/chat/prompt.ts` (numbered passages, citations checked against what was sent; invented numbers are flagged), model `claude-haiku-5-5` (cheapest tier, shown on the page). Separate Settings opt-in before any course text is sent. **Gaps, stated plainly:** it searches Canvas text (pages, assignments, announcements, syllabus) read live, not the on-disk manifest; PDFs and slides are not read (next step: pdf.js text extraction, or reuse the ingest `text/` mirror). Citation form follows the README (`[ECE 3030 · path §section]`) but page numbers need PDF text. No review guide has been generated on a real course.
+
 ## Slice 2 — Ed Discussion
 
 - Ed has a real JSON API behind the web app (session-authenticated). Spike first: which endpoint lists a course's threads, what a staff announcement or "due" post looks like, and whether the cookie attaches from the worker.

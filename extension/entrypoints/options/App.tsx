@@ -196,6 +196,10 @@ export default function App() {
           <input type="checkbox" checked={ai.enabled} onChange={(e) => void saveAiSettings({ ...ai, enabled: e.target.checked })} />
           Let a model choose files when the rules find nothing
         </label>
+        <label className="mt-2 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={ai.allowContent} onChange={(e) => void saveAiSettings({ ...ai, allowContent: e.target.checked })} />
+          Course chat: send the few matching passages of course text with each question
+        </label>
         <button type="button" className="mt-2 text-sm underline" onClick={() => void saveAiSettings(ai)}>Save key</button>
         {aiNote && <p className="mt-2 text-sm">{aiNote}</p>}
       </section>
