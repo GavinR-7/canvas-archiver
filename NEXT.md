@@ -34,6 +34,10 @@ The v2 deliverables (download folder, all files, AI downloader, chat, schedule m
 
 Built: exam dates from the Canvas syllabus and Ed announcements/pinned threads (`src/dates`, `src/ed`), merged across sources (`mergeTasks`), shown as *unconfirmed*; opt-in `due.json` sync (`src/sync`, options page, 2-hour alarm; contract in `docs/DUE_JSON.md`). **Unverified on a real account:** Ed's endpoints/auth (written from memory of its web client), Gradescope parser (PR #1), the syllabus extractor on Gavin's real syllabi (tests use synthetic text). Canvas calendar events (instructor-posted prelims) are not read yet.
 
+## T-27 status (branch `products/v2-feed`)
+
+Built: opt-in nightly feed (Settings → inbox folder + switch; alarm opens `files.html?auto=feed`, which runs the ingest layout into the inbox and closes), course folders normalised to the contract name (`ECE 3030 FA26` → `ece3030`), and `tools/hq-ingest/`, the no-AI ingest script (tested). **Unverified:** Chrome accepting a `\\wsl.localhost` folder, folder permission surviving a browser restart, `pdftotext` not installed here, the whole chain on a real course.
+
 ## Slice 2 — Ed Discussion
 
 - Ed has a real JSON API behind the web app (session-authenticated). Spike first: which endpoint lists a course's threads, what a staff announcement or "due" post looks like, and whether the cookie attaches from the worker.
