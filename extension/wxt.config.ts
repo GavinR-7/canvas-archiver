@@ -21,7 +21,8 @@ export default defineConfig({
       "See everything due across your Canvas courses. Local-first: no account, no backend, nothing leaves your browser.",
     // `storage` is the only capability API needed so far. Note what is absent:
     // no `tabs`, no `<all_urls>`, no `webRequest`.
-    permissions: ["storage"],
+    // `downloads` is used only by the "Save to Downloads instead" fallback.
+    permissions: ["storage", "downloads"],
     host_permissions: [...hostPermissions, ...gradescopeHostPermissions],
     action: {
       default_title: "Canvas Archiver",

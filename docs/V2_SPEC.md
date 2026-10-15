@@ -56,6 +56,10 @@ Order is the build order. Each is one PR with unit tests on the pure logic and `
 - **Mechanism:** One `Task` list from Canvas planner, Gradescope (done, in review), Ed Discussion (slice 2), and syllabus-extracted dates (D2+D4, flagged "from syllabus, unconfirmed"). Opt-in sync to `gavin-data` (slice 3) so HQ can plan from real deadlines. Duplicate detection across sources (same course, near title, same day).
 - **Done when:** Upcoming shows all four sources with a source badge, a duplicate across Canvas and Gradescope appears once, and `due.json` sync is idempotent (no commit when unchanged).
 
+### D2b — HQ ingest profile (requested by Research-Lead, T-14)
+`knowledge/courses/README.md` "Ingest contract" wants the same download in a different shape: `<inbox>/<course-slug>/<NN-module-slug>/<file>`, syllabus in `_syllabus/`, and a `_batches/<ISO>.json` written **last** listing `{course, path, source: "canvas:file/<id>", canvasModifiedAt, size, sha256}` per file. It is a second layout profile on the same planner, not a different downloader: D1 keeps the planner's root and segment naming parameterised for it. Needs sha256 of the bytes as they are written (streamed hash in the runner), the six course slugs mapped from Canvas course codes, and a "Chrome may refuse `\\wsl.localhost`" fallback to a Windows folder (unverified, first run decides).
+- **Done when:** with profile "HQ ingest" selected, a run writes the files plus a batch manifest whose entries match the files on disk byte for byte (size, sha256), the manifest appears only after every file is written, and a re-run lists only changed files.
+
 ## Out of scope for v2
 
 Writing anything to Canvas, Gradescope or Ed (submitting, posting, marking read). Multi-institution support. A hosted backend. Mobile.
