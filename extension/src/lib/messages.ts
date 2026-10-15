@@ -17,7 +17,9 @@ export type Request =
   /** Return whatever is cached, fetching only if nothing is. */
   | { type: "GET_SNAPSHOT" }
   /** Re-fetch from Canvas regardless of cache. */
-  | { type: "REFRESH" };
+  | { type: "REFRESH" }
+  /** Refresh, then push due.json if sync is enabled. */
+  | { type: "SYNC_NOW" };
 
 export type SnapshotErrorKind = "session-expired" | "network" | "other";
 
@@ -50,6 +52,8 @@ export interface Snapshot {
    * tasks from the previous successful fetch stay in `tasks`.
    */
   gradescopeError: SnapshotError | null;
+  /** Same for Ed Discussion. Absent in snapshots cached before Ed existed. */
+  edError?: SnapshotError | null;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {
