@@ -25,6 +25,7 @@ import { looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runn
 import { downloadsSink, folderManifestStore, folderSink, storageManifestStore } from "@/src/files/sinks";
 import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
 import { useSnapshot } from "@/src/ui/useSnapshot";
+import Picker from "./Picker";
 import { runFeed } from "@/src/feed/run";
 
 const AUTO_FEED = new URLSearchParams(location.search).get("auto") === "feed";
@@ -263,6 +264,7 @@ export default function App() {
           )}
         </section>
       )}
+      <Picker courses={courses} tasks={snapshot.tasks} root={root} ready={Boolean(ready)} />
     </div>
   );
 }

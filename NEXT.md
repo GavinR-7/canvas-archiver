@@ -38,6 +38,10 @@ Built: exam dates from the Canvas syllabus and Ed announcements/pinned threads (
 
 Built: opt-in nightly feed (Settings → inbox folder + switch; alarm opens `files.html?auto=feed`, which runs the ingest layout into the inbox and closes), course folders normalised to the contract name (`ECE 3030 FA26` → `ece3030`), and `tools/hq-ingest/`, the no-AI ingest script (tested). **Unverified:** Chrome accepting a `\\wsl.localhost` folder, folder permission surviving a browser restart, `pdftotext` not installed here, the whole chain on a real course.
 
+## T-28 status (branch `products/v2-ai-pick`)
+
+Built: "Get everything for…" on the Files page. `src/ai/pick.ts` is pure rules (exam named in folder/file, other-numbered exams excluded, "weeks 3-6", syllabus "Prelim 2 covers lectures 10-18"), each pick with its reason; `src/ai/model.ts` is the opt-in fallback with the user's own key (names only, reply cut to ids we sent). **Unverified:** a real request on a real account; syllabus phrasing varies, so coverage detection is best-effort; the model call has never been made (no key here).
+
 ## Slice 2 — Ed Discussion
 
 - Ed has a real JSON API behind the web app (session-authenticated). Spike first: which endpoint lists a course's threads, what a staff announcement or "due" post looks like, and whether the cookie attaches from the worker.

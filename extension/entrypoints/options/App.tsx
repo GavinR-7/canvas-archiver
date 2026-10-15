@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, validate, type SyncSettings } from "@/src/sync/github";
+import { DEFAULT_AI, loadAi, saveAi, type AiSettings } from "@/src/ai/model";
 import { INBOX_KEY, loadRoot, pickRoot, requestRootAccess, rootAccess, saveRoot, type RootAccess } from "@/src/files/handle-store";
 import { DEFAULT_FEED, loadFeed, loadFeedStatus, saveFeed, type FeedSettings, type FeedStatus } from "@/src/feed/settings";
 import { loadSettings, loadStatus, saveSettings, type SyncStatus } from "@/src/sync/settings";
@@ -29,6 +30,21 @@ export default function App() {
   const [inbox, setInbox] = useState<FileSystemDirectoryHandle | null>(null);
   const [inboxAccess, setInboxAccess] = useState<RootAccess>("prompt");
   const [feedNote, setFeedNote] = useState<string | null>(null);
+
+  const [ai, setAi] = useState<AiSettings>(DEFAULT_AI);
+  const [aiNote, setAiNote] = useState<string | null>(null);
+  useEffect(() => { void loadAi().then(setAi); }, []);
+  const saveAiSettings = async (next: AiSettings) => {
+    setAiNote(null);
+    if (next.enabled) {
+      if (!next.apiKey.trim()) return setAiNote("Paste your Anthropic API key first.");
+      const granted = await chrome.permissions.request({ origins: ["https://api.anthropic.com/*"] });
+      if (!granted) return setAiNote("Chrome did not grant access to api.anthropic.com, so this stays off.");
+    }
+    await saveAi({ ...next, apiKey: next.apiKey.trim() });
+    setAi({ ...next, apiKey: next.apiKey.trim() });
+    setAiNote(next.enabled ? "Saved." : "Off.");
+  };
 
   useEffect(() => {
     void loadFeed().then(setFeed);
@@ -163,6 +179,25 @@ export default function App() {
             Last run {new Date(feedStatus.at).toLocaleString()}: {feedStatus.message}
           </p>
         )}
+      </section>
+
+      <section className="mt-10">
+        <h2 className="font-medium">AI file picker (your own API key)</h2>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Off by default. "Get everything for prelim 2" uses plain rules first. If they find nothing, and this is on, the
+          course's folder and file <em>names</em> (never file contents) are sent to Anthropic with your key so a model can choose.
+          The key stays in this browser and is sent only to api.anthropic.com.
+        </p>
+        <label className="mt-3 block text-sm">
+          API key
+          <input type="password" autoComplete="off" className={input} value={ai.apiKey} onChange={(e) => setAi({ ...ai, apiKey: e.target.value })} placeholder="sk-ant-…" />
+        </label>
+        <label className="mt-2 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={ai.enabled} onChange={(e) => void saveAiSettings({ ...ai, enabled: e.target.checked })} />
+          Let a model choose files when the rules find nothing
+        </label>
+        <button type="button" className="mt-2 text-sm underline" onClick={() => void saveAiSettings(ai)}>Save key</button>
+        {aiNote && <p className="mt-2 text-sm">{aiNote}</p>}
       </section>
     </div>
   );
