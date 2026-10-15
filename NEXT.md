@@ -30,6 +30,10 @@ The v2 deliverables (download folder, all files, AI downloader, chat, schedule m
 - **Unverified:** the parser is written against reconstructed markup (`tests/fixtures/gradescope-markup.ts`), not a capture. First run on Gavin's real account decides it. If a row is missing: save the course page HTML (redacted), swap it into the fixture, fix the selector. Also unverified: that the session cookie attaches cross-origin for Gradescope the way it does for Canvas (spike result is Canvas-only).
 - **Follow-ups:** exams/quizzes that Gradescope lists outside the assignment table; show "late due" as a second deadline; multi-institution hosts.
 
+## T-25 status (branch `products/v2-dates`)
+
+Built: exam dates from the Canvas syllabus and Ed announcements/pinned threads (`src/dates`, `src/ed`), merged across sources (`mergeTasks`), shown as *unconfirmed*; opt-in `due.json` sync (`src/sync`, options page, 2-hour alarm; contract in `docs/DUE_JSON.md`). **Unverified on a real account:** Ed's endpoints/auth (written from memory of its web client), Gradescope parser (PR #1), the syllabus extractor on Gavin's real syllabi (tests use synthetic text). Canvas calendar events (instructor-posted prelims) are not read yet.
+
 ## Slice 2 — Ed Discussion
 
 - Ed has a real JSON API behind the web app (session-authenticated). Spike first: which endpoint lists a course's threads, what a staff announcement or "due" post looks like, and whether the cookie attaches from the worker.

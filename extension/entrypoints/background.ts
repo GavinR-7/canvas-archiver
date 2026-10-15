@@ -35,6 +35,8 @@ import { fetchGradescopeTasks } from "@/src/gradescope/api";
 import { fetchEdTasks } from "@/src/ed/api";
 import { fetchSyllabusTasks } from "@/src/dates/syllabus";
 import { mergeTasks } from "@/src/dates/merge";
+import { loadSettings } from "@/src/sync/settings";
+import { syncDue } from "@/src/sync/run";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -153,7 +155,28 @@ async function getSnapshot(): Promise<Snapshot> {
   return refreshOnce();
 }
 
+/** Refresh from every source, then push due.json when the person has turned sync on. */
+async function refreshAndSync(): Promise<Snapshot> {
+  const snapshot = await refreshOnce();
+  await syncDue(snapshot, await loadSettings()).catch((error: unknown) => {
+    console.warn("[canvas-archiver] due.json sync failed", error);
+  });
+  return snapshot;
+}
+
+const REFRESH_ALARM = "refresh-and-sync";
+const REFRESH_EVERY_MINUTES = 120;
+
 export default defineBackground(() => {
+  // Alarms persist across worker restarts, but only fire while Chrome is running.
+  // Creating one with an existing name replaces it, so this is safe on every start.
+  void chrome.alarms.get(REFRESH_ALARM).then((existing) => {
+    if (!existing) void chrome.alarms.create(REFRESH_ALARM, { delayInMinutes: 1, periodInMinutes: REFRESH_EVERY_MINUTES });
+  });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === REFRESH_ALARM) void refreshAndSync();
+  });
+
   /**
    * The message bus.
    *
@@ -166,9 +189,11 @@ export default defineBackground(() => {
     const handler =
       message?.type === "REFRESH"
         ? refreshOnce
-        : message?.type === "GET_SNAPSHOT"
-          ? getSnapshot
-          : null;
+        : message?.type === "SYNC_NOW"
+          ? refreshAndSync
+          : message?.type === "GET_SNAPSHOT"
+            ? getSnapshot
+            : null;
 
     if (!handler) return false;
 

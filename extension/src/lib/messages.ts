@@ -17,7 +17,9 @@ export type Request =
   /** Return whatever is cached, fetching only if nothing is. */
   | { type: "GET_SNAPSHOT" }
   /** Re-fetch from Canvas regardless of cache. */
-  | { type: "REFRESH" };
+  | { type: "REFRESH" }
+  /** Refresh, then push due.json if sync is enabled. */
+  | { type: "SYNC_NOW" };
 
 export type SnapshotErrorKind = "session-expired" | "network" | "other";
 
