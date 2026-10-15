@@ -37,6 +37,9 @@ Order is the build order. Each is one PR with unit tests on the pure logic and `
 - **Done when:** unit tests cover sanitising, collisions, module ordering and the not-in-a-module bucket; the app shows a plan (counts, total size) before anything is written; a run writes the tree into the chosen folder; a second run downloads nothing new; Gavin has run it on one real course.
 
 ### D2 — Every file for every class
+
+> **Status:** built on `products/v2-full-archive` (Canvas sources + ingest profile D2b). Gradescope content and the measured full-course time are still open.
+
 - **Mechanism:** Extend D1's source list: syllabus, assignment and page attachments (`/courses/:id/assignments`, pages' `<a data-api-endpoint>` links), announcements' attachments, and Course files folders. Manifest (`manifest.json` per course, in the folder) records Canvas file id, updated_at, size, path, so updates are detected by `updated_at`, not name. Locked or hidden files are listed as "not available", never retried in a loop.
 - **Done when:** a course with files in all of those places yields a manifest that matches Canvas's own file count (±files Canvas reports locked); re-run after Canvas changes one file downloads exactly that file.
 

@@ -1,28 +1,31 @@
 /**
- * The download plan: which Canvas files go to which relative path.
+ * The archive plan: every item to save for a course, and where it goes.
  *
  * Pure. No network and no file system, so the whole layout is unit-tested.
- * Layout, under the folder the user chose:
+ * Two layouts share one planner (see `layout.ts`):
  *
- *   Cornell/<course>/<NN module name>/<file>      files linked from a module
- *   Cornell/<course>/Course files/<folders>/<file> files not in any module
+ *   archive  Cornell/<course>/<NN module>/<file>            (default; for people)
+ *   ingest   <course-slug>/<NN-module-slug>/<file>          (HQ's nightly ingest)
  *
- * Module folders are prefixed with their position (`01 Week 1`) so they sort in
- * the order the instructor arranged them, not alphabetically ("Week 10" before
- * "Week 2"). A file linked from several modules is placed once, in the first.
+ * An item is either a *download* (a Canvas file, fetched by URL) or *inline*
+ * (a page, assignment, announcement or syllabus, rendered to an HTML file from
+ * text Canvas already returned). Every item has a stable `source` id, like
+ * `canvas:file/8841223`; names can change, ids cannot, and the manifest and the
+ * ingest ledger both key on it.
  */
 
 import type { Course } from "@/src/types/canvas";
-import { sanitizeFilename, sanitizeSegment, uniqueNames } from "./paths";
+import { archiveLayout, type Layout } from "./layout";
+import { courseFolderName, ROOT_FOLDER, sanitizeFilename, sanitizeSegment, uniqueNames } from "./paths";
 
-export const ROOT_FOLDER = "Cornell";
-export const LOOSE_FOLDER = "Course files";
+export { courseFolderName, ROOT_FOLDER };
+import { renderDocument } from "./render";
 
 export interface CanvasFile {
   id: number;
   displayName: string;
   filename: string;
-  /** Bytes, as Canvas reports them. Used to skip files already on disk. */
+  /** Bytes, as Canvas reports them. */
   size: number;
   updatedAt: string | null;
   /** Download URL Canvas issued. Carries its own verifier; never log or store it. */
@@ -45,35 +48,55 @@ export interface CanvasModule {
   fileIds: number[];
 }
 
-export interface PlannedFile {
-  fileId: number;
+/** A page, assignment, announcement or syllabus: text we render to HTML. */
+export interface CanvasDocument {
+  kind: "page" | "assignment" | "announcement" | "syllabus";
+  /** Stable key within its kind: page url slug, numeric id, or the course id. */
+  key: string;
+  title: string;
+  html: string;
+  modifiedAt: string | null;
+  /** Where it lives in Canvas, for the header of the saved file. */
+  htmlUrl: string | null;
+}
+
+export interface CourseSources {
+  modules: CanvasModule[];
+  files: CanvasFile[];
+  folders: CanvasFolder[];
+  documents: CanvasDocument[];
+}
+
+export interface PlannedItem {
+  /** Stable id: `canvas:file/<id>`, `canvas:page/<slug>`, `canvas:assignment/<id>`, ... */
+  source: string;
   courseId: number;
   /** Path segments below the chosen folder, ending in the file name. */
   path: string[];
   size: number;
-  updatedAt: string | null;
-  url: string;
+  modifiedAt: string | null;
+  /** Set for downloads; null for inline items. */
+  url: string | null;
+  /** Set for inline items; null for downloads. */
+  content: string | null;
 }
 
 export type SkipReason = "locked" | "no-url";
 
 export interface SkippedFile {
-  fileId: number;
+  source: string;
   name: string;
   reason: SkipReason;
 }
 
 export interface CoursePlan {
   courseId: number;
+  /** Folder name (archive) or slug (ingest); the unit the manifest is kept for. */
   folder: string;
-  files: PlannedFile[];
+  /** Directory of this course below the chosen folder. */
+  dir: string[];
+  items: PlannedItem[];
   skipped: SkippedFile[];
-}
-
-export function courseFolderName(course: Pick<Course, "name" | "courseCode">): string {
-  const { courseCode, name } = course;
-  const label = courseCode && name && name !== courseCode ? `${courseCode} ${name}` : name || courseCode;
-  return sanitizeSegment(label, "Course");
 }
 
 /** `course files/Lectures/Week 1` → `["Lectures", "Week 1"]` */
@@ -84,75 +107,103 @@ function folderSegments(fullName: string | undefined): string[] {
   return parts.map((part) => sanitizeSegment(part, "folder"));
 }
 
-export function moduleFolderName(module: Pick<CanvasModule, "name" | "position">): string {
-  const prefix = String(module.position).padStart(2, "0");
-  return sanitizeSegment(`${prefix} ${module.name}`, `${prefix} Module`);
+const utf8 = new TextEncoder();
+
+/** Source id for a document. */
+export function documentSource(doc: Pick<CanvasDocument, "kind" | "key">): string {
+  return `canvas:${doc.kind}/${doc.key}`;
 }
 
-/** Plan one course. `folderNames` should already be unique across the courses being planned. */
+export function fileSource(id: number): string {
+  return `canvas:file/${id}`;
+}
+
+/** Plan one course. `folder` must already be unique among the courses being planned. */
 export function planCourse(
   course: Pick<Course, "id" | "name" | "courseCode">,
-  modules: CanvasModule[],
-  files: CanvasFile[],
-  folders: CanvasFolder[],
-  folderName: string = courseFolderName(course),
+  sources: CourseSources,
+  layout: Layout = archiveLayout,
+  folder: string = layout.courseName(course),
 ): CoursePlan {
+  const { modules, files, folders, documents } = sources;
+  const dir = layout.courseDir(folder);
   const byId = new Map(files.map((file) => [file.id, file]));
-  const folderById = new Map(folders.map((folder) => [folder.id, folder.fullName]));
+  const folderById = new Map(folders.map((entry) => [entry.id, entry.fullName]));
   const placed = new Set<number>();
   const skipped: SkippedFile[] = [];
-  const entries: { dir: string[]; file: CanvasFile }[] = [];
+  const entries: { dir: string[]; name: string; build: (name: string) => PlannedItem }[] = [];
 
-  const place = (dir: string[], file: CanvasFile) => {
+  const placeFile = (target: string[], file: CanvasFile) => {
     placed.add(file.id);
-    if (file.locked) return void skipped.push({ fileId: file.id, name: file.displayName, reason: "locked" });
-    if (!file.url) return void skipped.push({ fileId: file.id, name: file.displayName, reason: "no-url" });
-    entries.push({ dir, file });
+    const source = fileSource(file.id);
+    if (file.locked) return void skipped.push({ source, name: file.displayName, reason: "locked" });
+    if (!file.url) return void skipped.push({ source, name: file.displayName, reason: "no-url" });
+    entries.push({
+      dir: target,
+      name: sanitizeFilename(file.filename || file.displayName, `file-${file.id}`),
+      build: (name) => ({
+        source,
+        courseId: course.id,
+        path: [...target, name],
+        size: file.size,
+        modifiedAt: file.updatedAt,
+        url: file.url,
+        content: null,
+      }),
+    });
   };
 
   const ordered = [...modules].sort((a, b) => a.position - b.position || a.id - b.id);
   for (const module of ordered) {
-    const dir = [ROOT_FOLDER, folderName, moduleFolderName(module)];
+    const target = layout.moduleDir(dir, module);
     for (const fileId of module.fileIds) {
       const file = byId.get(fileId);
-      if (file && !placed.has(file.id)) place(dir, file);
+      if (file && !placed.has(file.id)) placeFile(target, file);
     }
   }
 
   const loose = files.filter((file) => !placed.has(file.id)).sort((a, b) => a.id - b.id);
   for (const file of loose) {
+    const isSyllabus = /syllabus/i.test(file.displayName);
     const sub = folderSegments(file.folderId === null ? undefined : folderById.get(file.folderId));
-    place([ROOT_FOLDER, folderName, LOOSE_FOLDER, ...sub], file);
+    placeFile(isSyllabus ? layout.syllabusDir(dir) : layout.looseDir(dir, sub), file);
   }
 
-  // Unique file names per directory, in plan order.
-  const dirs = new Map<string, { dir: string[]; file: CanvasFile }[]>();
-  for (const entry of entries) {
-    const key = entry.dir.join("/").toLowerCase();
-    const group = dirs.get(key);
-    if (group) group.push(entry);
-    else dirs.set(key, [entry]);
-  }
-
-  const planned: PlannedFile[] = [];
-  for (const group of dirs.values()) {
-    const names = uniqueNames(
-      group.map(({ file }) => sanitizeFilename(file.filename || file.displayName, `file-${file.id}`)),
-    );
-    group.forEach(({ dir, file }, i) => {
-      planned.push({
-        fileId: file.id,
+  for (const doc of documents) {
+    const content = renderDocument(doc);
+    const target = doc.kind === "syllabus" ? layout.syllabusDir(dir) : layout.documentDir(dir, doc.kind);
+    entries.push({
+      dir: target,
+      name: layout.documentName(doc),
+      build: (name) => ({
+        source: documentSource(doc),
         courseId: course.id,
-        path: [...dir, names[i] as string],
-        size: file.size,
-        updatedAt: file.updatedAt,
-        url: file.url as string,
-      });
+        path: [...target, name],
+        size: utf8.encode(content).length,
+        modifiedAt: doc.modifiedAt,
+        url: null,
+        content,
+      }),
     });
   }
 
-  planned.sort((a, b) => a.path.join("/").localeCompare(b.path.join("/"), undefined, { numeric: true }));
-  return { courseId: course.id, folder: folderName, files: planned, skipped };
+  // Unique names per directory (case-insensitive), in plan order.
+  const groups = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const key = entry.dir.join("/").toLowerCase();
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+
+  const items: PlannedItem[] = [];
+  for (const group of groups.values()) {
+    const names = uniqueNames(group.map((entry) => entry.name));
+    group.forEach((entry, i) => items.push(entry.build(names[i] as string)));
+  }
+
+  items.sort((a, b) => a.path.join("/").localeCompare(b.path.join("/"), undefined, { numeric: true }));
+  return { courseId: course.id, folder, dir, items, skipped };
 }
 
 /**
@@ -160,22 +211,16 @@ export function planCourse(
  * section, a code reused across terms) get ` (2)` rather than merging.
  */
 export function planCourses(
-  inputs: {
-    course: Pick<Course, "id" | "name" | "courseCode">;
-    modules: CanvasModule[];
-    files: CanvasFile[];
-    folders: CanvasFolder[];
-  }[],
+  inputs: { course: Pick<Course, "id" | "name" | "courseCode">; sources: CourseSources }[],
+  layout: Layout = archiveLayout,
 ): CoursePlan[] {
-  const names = uniqueNames(inputs.map(({ course }) => courseFolderName(course)));
-  return inputs.map(({ course, modules, files, folders }, i) =>
-    planCourse(course, modules, files, folders, names[i]),
-  );
+  const names = layout.uniqueCourseNames(inputs.map(({ course }) => layout.courseName(course)));
+  return inputs.map(({ course, sources }, i) => planCourse(course, sources, layout, names[i]));
 }
 
 export interface PlanSummary {
   courses: number;
-  files: number;
+  items: number;
   bytes: number;
   skipped: number;
 }
@@ -183,8 +228,8 @@ export interface PlanSummary {
 export function summarize(plans: CoursePlan[]): PlanSummary {
   return {
     courses: plans.length,
-    files: plans.reduce((n, plan) => n + plan.files.length, 0),
-    bytes: plans.reduce((n, plan) => n + plan.files.reduce((m, f) => m + f.size, 0), 0),
+    items: plans.reduce((n, plan) => n + plan.items.length, 0),
+    bytes: plans.reduce((n, plan) => n + plan.items.reduce((m, item) => m + item.size, 0), 0),
     skipped: plans.reduce((n, plan) => n + plan.skipped.length, 0),
   };
 }
