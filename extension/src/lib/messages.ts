@@ -50,6 +50,8 @@ export interface Snapshot {
    * tasks from the previous successful fetch stay in `tasks`.
    */
   gradescopeError: SnapshotError | null;
+  /** Same for Ed Discussion. Absent in snapshots cached before Ed existed. */
+  edError?: SnapshotError | null;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {

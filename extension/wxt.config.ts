@@ -2,6 +2,7 @@ import { defineConfig } from "wxt";
 import tailwindcss from "@tailwindcss/vite";
 import { hostPermissions } from "./src/config/canvas";
 import { gradescopeHostPermissions } from "./src/config/gradescope";
+import { edHostPermissions } from "./src/config/ed";
 
 /**
  * WXT generates `manifest.json` from this object plus the files in
@@ -23,7 +24,7 @@ export default defineConfig({
     // no `tabs`, no `<all_urls>`, no `webRequest`.
     // `downloads` is used only by the "Save to Downloads instead" fallback.
     permissions: ["storage", "downloads"],
-    host_permissions: [...hostPermissions, ...gradescopeHostPermissions],
+    host_permissions: [...hostPermissions, ...gradescopeHostPermissions, ...edHostPermissions],
     action: {
       default_title: "Canvas Archiver",
     },

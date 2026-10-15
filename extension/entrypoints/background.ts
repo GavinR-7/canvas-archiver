@@ -24,7 +24,6 @@ import {
   fetchUser,
   UPCOMING_DAYS,
 } from "@/src/canvas/api";
-import { byDueDate } from "@/src/lib/task-status";
 import { CanvasError, SessionExpiredError } from "@/src/canvas/errors";
 import {
   EMPTY_SNAPSHOT,
@@ -33,6 +32,9 @@ import {
   type SnapshotError,
 } from "@/src/lib/messages";
 import { fetchGradescopeTasks } from "@/src/gradescope/api";
+import { fetchEdTasks } from "@/src/ed/api";
+import { fetchSyllabusTasks } from "@/src/dates/syllabus";
+import { mergeTasks } from "@/src/dates/merge";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -88,14 +90,29 @@ async function refresh(): Promise<Snapshot> {
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
     const tasks = await fetchUpcomingTasks(courses);
 
+    // Dates written in prose (syllabus, Ed announcements) are best-effort: each
+    // fails alone, and its previous result is kept rather than blanking.
+    const current = courses.filter((c) => !c.restricted);
+    const syllabus = await fetchSyllabusTasks(current, UPCOMING_DAYS).catch((error: unknown) => {
+      console.warn("[canvas-archiver] syllabus dates failed", error);
+      return previous.tasks.filter((task) => task.source === "syllabus");
+    });
+    let edError: SnapshotError | null = null;
+    const ed = await fetchEdTasks(current, UPCOMING_DAYS).catch((error: unknown) => {
+      console.warn("[canvas-archiver] ed refresh failed", error);
+      edError = describeError(error, "Ed Discussion");
+      return previous.tasks.filter((task) => task.source === "ed");
+    });
+
     const gs = await gradescope;
     const snapshot: Snapshot = {
       user,
       courses,
-      tasks: [...tasks, ...gs.tasks].sort(byDueDate),
+      tasks: mergeTasks([...tasks, ...gs.tasks, ...syllabus, ...ed]),
       fetchedAt: new Date().toISOString(),
       error: null,
       gradescopeError: gs.error,
+      edError,
     };
     await saveSnapshot(snapshot);
     return snapshot;
@@ -107,7 +124,7 @@ async function refresh(): Promise<Snapshot> {
     const failed: Snapshot = {
       ...previous,
       // Canvas data is stale, but a fresh Gradescope result is still good.
-      tasks: [...previous.tasks.filter((task) => task.source === "canvas"), ...gs.tasks].sort(byDueDate),
+      tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...gs.tasks]),
       error: describeError(error),
       gradescopeError: gs.error,
     };
