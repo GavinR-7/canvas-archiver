@@ -37,6 +37,7 @@ import { fetchSyllabusTasks } from "@/src/dates/syllabus";
 import { mergeTasks } from "@/src/dates/merge";
 import { loadSettings } from "@/src/sync/settings";
 import { syncDue } from "@/src/sync/run";
+import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -156,6 +157,26 @@ async function getSnapshot(): Promise<Snapshot> {
 }
 
 /** Refresh from every source, then push due.json when the person has turned sync on. */
+const FEED_ALARM = "nightly-feed";
+
+/** (Re)create the daily alarm for the configured hour, or remove it. */
+async function scheduleFeed() {
+  const feed = await loadFeed();
+  await chrome.alarms.clear(FEED_ALARM);
+  if (feed.enabled) {
+    void chrome.alarms.create(FEED_ALARM, {
+      delayInMinutes: minutesUntilHour(new Date(), feed.hour),
+      periodInMinutes: 24 * 60,
+    });
+  }
+}
+
+/** The run needs a page (folder handle, long loop), so open one without taking focus. */
+async function startFeed() {
+  if (!(await loadFeed()).enabled) return;
+  await chrome.tabs.create({ url: chrome.runtime.getURL("files.html?auto=feed"), active: false });
+}
+
 async function refreshAndSync(): Promise<Snapshot> {
   const snapshot = await refreshOnce();
   await syncDue(snapshot, await loadSettings()).catch((error: unknown) => {
@@ -173,8 +194,13 @@ export default defineBackground(() => {
   void chrome.alarms.get(REFRESH_ALARM).then((existing) => {
     if (!existing) void chrome.alarms.create(REFRESH_ALARM, { delayInMinutes: 1, periodInMinutes: REFRESH_EVERY_MINUTES });
   });
+  void scheduleFeed();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes["feed.settings"]) void scheduleFeed();
+  });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === REFRESH_ALARM) void refreshAndSync();
+    if (alarm.name === FEED_ALARM) void startFeed();
   });
 
   /**

@@ -25,6 +25,9 @@ import { looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runn
 import { downloadsSink, folderManifestStore, folderSink, storageManifestStore } from "@/src/files/sinks";
 import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
 import { useSnapshot } from "@/src/ui/useSnapshot";
+import { runFeed } from "@/src/feed/run";
+
+const AUTO_FEED = new URLSearchParams(location.search).get("auto") === "feed";
 
 const button =
   "rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white";
@@ -58,6 +61,21 @@ export default function App() {
       if (saved) setAccess(await rootAccess(saved));
     })();
   }, []);
+
+  // Opened by the nightly alarm: run the feed once, record the result, close.
+  const ran = useRef(false);
+  useEffect(() => {
+    if (!AUTO_FEED || loading || ran.current) return;
+    ran.current = true;
+    void (async () => {
+      setBusy(true);
+      setStatus("Nightly feed to HQ is running. This tab closes when it is done.");
+      const outcome = await runFeed(snapshot.courses);
+      setStatus(outcome.message);
+      setBusy(false);
+      if (outcome.ok) setTimeout(() => window.close(), 3000);
+    })();
+  }, [loading, snapshot.courses]);
 
   const courses = snapshot.courses.filter((c) => !c.restricted);
   const selected = chosen ?? new Set(courses.map((c) => c.id));

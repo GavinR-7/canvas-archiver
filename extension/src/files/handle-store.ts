@@ -10,6 +10,8 @@
 const DB = "canvas-archiver";
 const STORE = "handles";
 const KEY = "download-root";
+/** The HQ knowledge inbox is a separate folder from the browsing archive. */
+export const INBOX_KEY = "ingest-inbox";
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -33,20 +35,20 @@ async function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
   }
 }
 
-export async function loadRoot(): Promise<FileSystemDirectoryHandle | null> {
+export async function loadRoot(key = KEY): Promise<FileSystemDirectoryHandle | null> {
   try {
-    return ((await run("readonly", (s) => s.get(KEY))) as FileSystemDirectoryHandle | undefined) ?? null;
+    return ((await run("readonly", (s) => s.get(key))) as FileSystemDirectoryHandle | undefined) ?? null;
   } catch {
     return null;
   }
 }
 
-export async function saveRoot(handle: FileSystemDirectoryHandle): Promise<void> {
-  await run("readwrite", (s) => s.put(handle, KEY));
+export async function saveRoot(handle: FileSystemDirectoryHandle, key = KEY): Promise<void> {
+  await run("readwrite", (s) => s.put(handle, key));
 }
 
-export async function forgetRoot(): Promise<void> {
-  await run("readwrite", (s) => s.delete(KEY));
+export async function forgetRoot(key = KEY): Promise<void> {
+  await run("readwrite", (s) => s.delete(key));
 }
 
 export type RootAccess = "granted" | "prompt" | "denied";
@@ -61,6 +63,6 @@ export async function requestRootAccess(handle: FileSystemDirectoryHandle): Prom
 }
 
 /** Must be called from a click handler. Throws AbortError if the user cancels. */
-export function pickRoot(): Promise<FileSystemDirectoryHandle> {
-  return window.showDirectoryPicker({ id: "canvas-archiver", mode: "readwrite" });
+export function pickRoot(id = "canvas-archiver"): Promise<FileSystemDirectoryHandle> {
+  return window.showDirectoryPicker({ id, mode: "readwrite" });
 }
