@@ -1,0 +1,124 @@
+/**
+ * The per-course manifest: what has been saved, so the next run only fetches
+ * what is new or changed, and so the nightly knowledge feed can see what
+ * arrived. Keyed by `source` (`canvas:file/<id>`), never by file name.
+ */
+
+import { Sha256 } from "./sha256";
+import type { PlannedItem } from "./plan";
+
+export interface ManifestEntry {
+  path: string[];
+  size: number;
+  /** Hash of the bytes as written. Null when the writer could not hash (Downloads fallback). */
+  sha256: string | null;
+  /** Canvas's modified time at save. Null for items Canvas gives no timestamp (syllabus). */
+  modifiedAt: string | null;
+  savedAt: string;
+}
+
+export interface CourseManifest {
+  version: 1;
+  courseId: number;
+  entries: Record<string, ManifestEntry>;
+}
+
+export const MANIFEST_FILE = ".canvas-archive.json";
+
+export function emptyManifest(courseId: number): CourseManifest {
+  return { version: 1, courseId, entries: {} };
+}
+
+/** A missing, corrupt or foreign manifest means "nothing saved yet", never a crash. */
+export function parseManifest(text: string | null, courseId: number): CourseManifest {
+  if (!text) return emptyManifest(courseId);
+  try {
+    const data = JSON.parse(text) as Partial<CourseManifest>;
+    if (data.version !== 1 || data.courseId !== courseId || typeof data.entries !== "object" || !data.entries) {
+      return emptyManifest(courseId);
+    }
+    return { version: 1, courseId, entries: data.entries };
+  } catch {
+    return emptyManifest(courseId);
+  }
+}
+
+export type Decision = "new" | "changed" | "unchanged";
+
+const encoder = new TextEncoder();
+
+export function hashText(text: string): string {
+  return new Sha256().update(encoder.encode(text)).digest();
+}
+
+/**
+ * Should this item be fetched?
+ *
+ * - No entry: new.
+ * - Inline items (pages etc.) are compared by the hash of their rendered text,
+ *   since Canvas timestamps for them are missing or unreliable.
+ * - Files are compared by Canvas's modified time and size.
+ * - Moved (module renamed or file re-filed): changed, so the tree stays true.
+ * - `onDiskSize` (archive layout only): a known file that was deleted or
+ *   truncated locally is fetched again. `undefined` means "not checked".
+ */
+export function decide(
+  item: PlannedItem,
+  entry: ManifestEntry | undefined,
+  onDiskSize?: number | null,
+): Decision {
+  if (!entry) return "new";
+  if (entry.path.join("/") !== item.path.join("/")) return "changed";
+  if (onDiskSize !== undefined && onDiskSize !== entry.size) return onDiskSize === null ? "new" : "changed";
+  if (item.content !== null) return entry.sha256 === hashText(item.content) ? "unchanged" : "changed";
+  return entry.modifiedAt === item.modifiedAt && entry.size === item.size ? "unchanged" : "changed";
+}
+
+export interface SavedRecord {
+  /** Course folder or slug the item belongs to. */
+  course: string;
+  source: string;
+  path: string[];
+  size: number;
+  sha256: string | null;
+  modifiedAt: string | null;
+}
+
+/**
+ * The batch file HQ's nightly ingest reads (knowledge/courses/README.md,
+ * "Ingest contract"). Paths are relative to the inbox and `/`-separated.
+ * `courses` is an addition to the contract: the Canvas id for each slug, so
+ * ingest can fill `course.json` without asking Canvas.
+ */
+export interface Batch {
+  createdAt: string;
+  courses: Record<string, number>;
+  files: {
+    course: string;
+    path: string;
+    source: string;
+    canvasModifiedAt: string | null;
+    size: number;
+    sha256: string | null;
+  }[];
+}
+
+export function buildBatch(createdAt: Date, saved: SavedRecord[], courses: Record<string, number>): Batch {
+  return {
+    createdAt: createdAt.toISOString(),
+    courses,
+    files: saved.map((s) => ({
+      course: s.course,
+      path: s.path.join("/"),
+      source: s.source,
+      canvasModifiedAt: s.modifiedAt,
+      size: s.size,
+      sha256: s.sha256,
+    })),
+  };
+}
+
+/** `2026-10-15T14:03:09.123Z` → `2026-10-15T140309`, the contract's file name (no colons: Windows). */
+export function batchFileName(at: Date): string {
+  return `${at.toISOString().replace(/\.\d+Z$/, "").replace(/:/g, "")}.json`;
+}
