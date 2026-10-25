@@ -10,6 +10,7 @@ import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { emptyManifest, ForeignCourseError, MANIFEST_FILE, manifestOwner, parseManifest, type CourseManifest } from "./manifest";
 import type { FileSink, ManifestStore } from "./runner";
 import { Sha256 } from "./sha256";
+import { acquireCanvasFile, browserDownload, type Method } from "./transfer";
 
 // --- Folder sink: File System Access API ---------------------------------
 
@@ -37,8 +38,14 @@ const encoder = new TextEncoder();
  * its own verifier, so no cookie is needed, and omitting them guarantees the
  * session cannot travel to whatever CDN the redirect lands on. The body is
  * tee'd through SHA-256 on its way to disk, so the hash is of what was written.
+ *
+ * Some file hosts refuse that read. `transfer.ts` then retries with the Canvas
+ * session and, when `downloadsFallback` is set (the archive layout), hands the
+ * file to the browser's downloader, which saves it under Downloads instead of
+ * this folder; the result says so (`method: "downloads"`). The ingest layout
+ * never does that: its files must land in the inbox.
  */
-export function folderSink(root: FileSystemDirectoryHandle): FileSink {
+export function folderSink(root: FileSystemDirectoryHandle, { downloadsFallback = false }: { downloadsFallback?: boolean } = {}): FileSink {
   return {
     keepsRecords: true,
 
@@ -74,6 +81,7 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
       let size = 0;
       let body: ReadableStream<Uint8Array>;
       let validator: string | null | undefined;
+      let method: Method = "fetch";
 
       if (item.content !== null) {
         const bytes = encoder.encode(item.content);
@@ -82,31 +90,38 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
         body = new Blob([bytes]).stream() as ReadableStream<Uint8Array>;
       } else {
         let response: Response;
-        // Gradescope files need the signed-in session, so the origin is checked first:
-        // the cookie only ever goes to Gradescope (GET, read-only).
-        if (item.session === "gradescope") assertCanvasOrigin(item.url as string, GRADESCOPE_ORIGIN);
-        try {
-          response = await fetch(
-            item.url as string,
-            item.session === "gradescope"
-              ? { method: "GET", credentials: "include", redirect: "follow", headers: conditionalHeaders(prior?.validator) }
-              : { credentials: "omit", redirect: "follow" },
-          );
-        } catch {
-          // A bare TypeError: network failure or the host refusing a cross-origin read.
-          throw new Error("blocked: the file host did not allow the browser to read this file");
-        }
-        if (item.session === "gradescope" && response.redirected && /\/(login|saml)\b/.test(new URL(response.url).pathname)) {
-          throw new Error("Gradescope session expired: sign in to Gradescope and run again");
-        }
         if (item.session === "gradescope") {
+          // Gradescope files need the signed-in session, so the origin is checked first:
+          // the cookie only ever goes to Gradescope (GET, read-only).
+          assertCanvasOrigin(item.url as string, GRADESCOPE_ORIGIN);
+          try {
+            response = await fetch(item.url as string, {
+              method: "GET",
+              credentials: "include",
+              redirect: "follow",
+              headers: conditionalHeaders(prior?.validator),
+            });
+          } catch {
+            // A bare TypeError: network failure or the host refusing a cross-origin read.
+            throw new Error("blocked: the file host did not allow the browser to read this file");
+          }
+          if (response.redirected && /\/(login|saml)\b/.test(new URL(response.url).pathname)) {
+            throw new Error("Gradescope session expired: sign in to Gradescope and run again");
+          }
           if (response.status === 304 && prior) return { size: prior.size, sha256: prior.sha256, validator: prior.validator, notModified: true };
           validator = validatorOf(response.headers);
+          if (!response.ok || !response.body) throw new Error(`Gradescope answered ${response.status}`);
+        } else {
+          const got = await acquireCanvasFile(
+            item,
+            { fetch: (input, init) => fetch(input, init), download: browserDownload(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) },
+            downloadsFallback,
+          );
+          if (got.how === "downloaded") return { size: got.size, sha256: null, method: got.method, savedTo: got.savedTo };
+          response = got.response;
+          method = got.method;
         }
-        if (!response.ok || !response.body) {
-          throw new Error(`${item.session === "gradescope" ? "Gradescope" : "Canvas"} answered ${response.status}`);
-        }
-        body = response.body;
+        body = response.body as ReadableStream<Uint8Array>;
       }
 
       const handle = await fileHandle(root, item.path, true);
@@ -131,7 +146,7 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
         await writable.abort().catch(() => undefined);
         throw error;
       }
-      return { size, sha256: hash.digest(), ...(validator !== undefined ? { validator } : {}) };
+      return { size, sha256: hash.digest(), method, ...(validator !== undefined ? { validator } : {}) };
     },
   };
 }

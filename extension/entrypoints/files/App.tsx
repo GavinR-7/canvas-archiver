@@ -24,7 +24,7 @@ import {
 } from "@/src/files/handle-store";
 import { loadDirBindings, rememberDirBindings } from "@/src/files/dirs";
 import { planCourses, summarize, type CoursePlan } from "@/src/files/plan";
-import { looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
+import { IN_DOWNLOADS, looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
 import { downloadsSink, folderManifestStore, folderSink, storageManifestStore } from "@/src/files/sinks";
 import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
 import { selectedIds } from "@/src/canvas/visibility";
@@ -162,7 +162,7 @@ export default function App() {
       abort.current = new AbortController();
       setProgress(null);
       try {
-        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle);
+        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle, { downloadsFallback: layout.id === "archive" });
         await rememberDirBindings(layout.id, plans); // each course keeps this folder from now on
         const store = layout.id === "ingest" ? storageManifestStore() : folderManifestStore(sink);
         const outcome = await runArchive(plans, layout, sink, store, {
@@ -284,7 +284,7 @@ export default function App() {
         <section className="mt-6" aria-live="polite">
           <h2 className="font-medium">Done</h2>
           <p className="mt-1 text-sm">
-            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}. Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
+            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} files are in the browser's Downloads folder (Downloads/Cornell/…, a name clash gets "(1)"), not in the archive folder, because their file host refused a direct read; the lines below list them. Move them in if you want them together.`} Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
           </p>
           {looksBlockedByCors(result) && !layout.needsFolder && (
             <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">
@@ -292,8 +292,11 @@ export default function App() {
               <button type="button" className={`${button} mt-2`} onClick={() => start(true)}>Save to Downloads instead</button>
             </div>
           )}
-          {result.failed > 0 && (
+          {result.failed + result.viaDownloads + result.alreadyInDownloads > 0 && (
             <ul className="mt-2 max-h-48 overflow-auto text-xs text-zinc-500">
+              {result.outcomes.filter((o) => o.status !== "failed" && o.inDownloads !== undefined).slice(0, 50).map((o) => (
+                <li key={o.source}>{o.path.join("/")} — {IN_DOWNLOADS}: Downloads/{o.inDownloads}</li>
+              ))}
               {result.outcomes.filter((o) => o.status === "failed").slice(0, 50).map((o) => (
                 <li key={o.source}>{o.path.join("/")} — {o.status === "failed" && o.message}</li>
               ))}
