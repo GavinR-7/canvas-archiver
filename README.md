@@ -20,7 +20,8 @@ stays in extension storage on your machine.
 
 Current milestone: a popup showing who you're signed in as and your active
 courses, plus a full-page "Upcoming" view of everything due in the next 14 days
-across all courses.
+across all courses, including Gradescope assignments (some courses post only
+there). Roadmap: [`NEXT.md`](NEXT.md).
 
 See [`extension/ARCHITECTURE.md`](extension/ARCHITECTURE.md) for the design, an
 MV3 primer, and the Canvas API knowledge carried over from the CLI.

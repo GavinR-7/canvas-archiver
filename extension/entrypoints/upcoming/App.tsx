@@ -13,11 +13,12 @@
 import { useMemo } from "react";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
+import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { taskStatus } from "@/src/lib/task-status";
 import { formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
 import { useNow } from "@/src/ui/useNow";
 import type { Task } from "@/src/types/canvas";
-import { EmptyState, ErrorBanner, KindBadge, Spinner, StatusBadge } from "@/src/ui/components";
+import { EmptyState, ErrorBanner, KindBadge, SourceBadge, Spinner, StatusBadge } from "@/src/ui/components";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
 /** Group tasks by local calendar day, preserving due-date order. */
@@ -59,6 +60,7 @@ function TaskRow({ task, now }: { task: Task; now: Date }) {
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
           <span>{task.courseCode || task.courseName}</span>
           <KindBadge kind={task.kind} />
+          <SourceBadge source={task.source} />
           {task.pointsPossible !== null && <span>{task.pointsPossible} pts</span>}
         </p>
       </div>
@@ -78,7 +80,7 @@ function TaskRow({ task, now }: { task: Task; now: Date }) {
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
-  const { tasks, error, fetchedAt, user } = snapshot;
+  const { tasks, error, gradescopeError, fetchedAt, user } = snapshot;
 
   // `now` is in the dependency list so grouping headings re-derive when the
   // clock crosses midnight, not only when the data changes.
@@ -111,6 +113,12 @@ export default function App() {
         {error && (
           <div className="mb-6">
             <ErrorBanner error={error} canvasOrigin={DEFAULT_CANVAS_ORIGIN} />
+          </div>
+        )}
+
+        {gradescopeError && (
+          <div className="mb-6">
+            <ErrorBanner error={gradescopeError} canvasOrigin={GRADESCOPE_ORIGIN} service="Gradescope" />
           </div>
         )}
 

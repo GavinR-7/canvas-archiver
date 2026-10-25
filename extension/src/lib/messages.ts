@@ -42,8 +42,14 @@ export interface Snapshot {
   tasks: Task[];
   /** When this data was fetched from Canvas. ISO 8601 UTC. */
   fetchedAt: string | null;
-  /** Non-null when the last fetch failed. Stale data may still be present. */
+  /** Non-null when the last Canvas fetch failed. Stale data may still be present. */
   error: SnapshotError | null;
+  /**
+   * Non-null when the last Gradescope fetch failed. Kept apart from `error` so
+   * a Gradescope outage never hides Canvas data (or the reverse); Gradescope
+   * tasks from the previous successful fetch stay in `tasks`.
+   */
+  gradescopeError: SnapshotError | null;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {
@@ -52,6 +58,7 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   tasks: [],
   fetchedAt: null,
   error: null,
+  gradescopeError: null,
 };
 
 /** Typed wrapper around `chrome.runtime.sendMessage`. */

@@ -7,6 +7,7 @@ const NOW = new Date("2026-03-01T12:00:00Z");
 function task(overrides: Partial<Task> = {}): Task {
   return {
     id: "assignment:1",
+    source: "canvas",
     canvasId: 1,
     kind: "assignment",
     title: "Lab 3",
