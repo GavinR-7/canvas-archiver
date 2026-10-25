@@ -172,6 +172,9 @@ export default function App() {
           (HQ's course inbox). HQ's own nightly job then files them. Nothing is uploaded anywhere. Chrome has to be open at that
           time, and it has to still have your permission for the folder (choose "Allow on every visit" if Chrome asks).
         </p>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Pick a normal Windows folder such as C:\Users\gavin\hq-course-inbox. Chrome refuses \\wsl.localhost paths.
+        </p>
         <p className="mt-2 text-sm">
           Inbox folder: <strong>{inbox ? inbox.name : "none chosen"}</strong>{" "}
           {inbox && inboxAccess !== "granted" && (

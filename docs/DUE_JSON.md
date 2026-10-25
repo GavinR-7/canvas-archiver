@@ -1,6 +1,6 @@
 # due.json: the deadline feed for HQ
 
-Written by the Canvas Archiver extension to the GitHub repo the person chooses in Settings (default `GavinR-7/gavin-data`, path `due.json`). Opt-in; off by default. The schedule is rebuilt about every 2 hours while Chrome is open (`chrome.alarms`), and a write only happens when the list of items changed, so it does not fill git history.
+Written by the Canvas Archiver extension to the GitHub repo the person chooses in Settings (default `GavinR-7/gavin-data`, path `due.json`). Opt-in; off by default, and it stays off until the GitHub token step is done (see `docs/SETUP.md`). The schedule is rebuilt about every 2 hours while Chrome is open (`chrome.alarms`), and a write only happens when the list of items changed, so it does not fill git history.
 
 ```json
 {
