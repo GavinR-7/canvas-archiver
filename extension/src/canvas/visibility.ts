@@ -13,8 +13,8 @@
  *    dates at all, its term code (from the term name, or its start date)
  *    matches the current term such as `FA26`; and
  * 2. it is not administrative: orientation, training, compliance and module
- *    courses are hidden, unless the course carries a real catalog code
- *    (`ECE 3140`), which is never hidden by the name heuristic.
+ *    courses are hidden, unless the course code carries a real catalog code
+ *    (`ECE 3140`, also inside `2026FA ECE 4999` or `ECE 4999_001`), which is never hidden by the name heuristic.
  *
  * A course with no usable term is hidden by default (it cannot be confirmed
  * current) and is one click away under Show all.
@@ -33,8 +33,19 @@ export interface Visibility {
 // "orientation", "training", "compliance", "module" as whole words; a catalog
 // course such as "ECE 3140 Embedded Systems" has none of them.
 const ADMIN_WORDS = /\b(orientation|training|trainings|compliance|modules?|onboarding)\b/i;
-// A real catalog code: letters then a four digit number ("ECE 3140", "CS3700").
-const CATALOG_CODE = /^[A-Za-z]{2,6}\s*-?\s*\d{4}[A-Za-z]?\b/;
+// A real catalog token: letters then a four digit number ("ECE 3140", "CS3700"), found anywhere in the
+// code so term prefixes ("2026FA ECE 4999") and section suffixes ("ECE 4999_001", "-001", ":A") still count.
+const CATALOG_TOKEN = /(?<![A-Za-z0-9])([A-Za-z]{2,6})\s*-?\s*(\d{4})[A-Za-z]?(?![A-Za-z0-9])/g;
+const TERM_LETTERS = /^(fa|sp|su|wi|fall|spring|summer|winter)$/i;
+
+function hasCatalogCode(code: string): boolean {
+  for (const [, letters = "", digits = ""] of code.matchAll(CATALOG_TOKEN)) {
+    // "FA2026" / "SU2018" is a term, not a course number.
+    if (TERM_LETTERS.test(letters) && /^(19|20)\d\d$/.test(digits)) continue;
+    return true;
+  }
+  return false;
+}
 
 function timeOf(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -45,7 +56,7 @@ function timeOf(value: string | null | undefined): number | null {
 export function courseVisibility(course: Course, now: Date): Visibility {
   const hide = (reason: HiddenReason): Visibility => ({ visible: false, reason });
 
-  if (!CATALOG_CODE.test(course.courseCode.trim()) && ADMIN_WORDS.test(`${course.name} ${course.courseCode}`)) {
+  if (!hasCatalogCode(course.courseCode) && ADMIN_WORDS.test(`${course.name} ${course.courseCode}`)) {
     return hide("administrative");
   }
 

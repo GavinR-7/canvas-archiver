@@ -71,4 +71,16 @@ describe("current-term filter", () => {
     expect(selectedIds(shown, chosen)).toBe(chosen);
     expect(fixture.filter((c) => selectedIds(shown, chosen).has(c.id)).map((c) => c.id)).toEqual([10, 12]);
   });
+
+  it("composite codes with a term prefix or section suffix keep their catalog exemption (Anvil T-494 P2)", () => {
+    const term = { id: 1, name: "Fall 2026", start_at: "2026-08-24T04:00:00Z", end_at: "2026-12-22T05:00:00Z" };
+    for (const code of ["2026FA ECE 4999", "ECE 4999_001", "FA26-CS 3700:A", "ECE4999-001"]) {
+      expect(courseVisibility(course(1, code, "Capstone Training Module Design", term), NOW)).toEqual({ visible: true, reason: null });
+    }
+  });
+
+  it("a term token such as SU2018 is not a catalog code", () => {
+    const term = { id: 1, name: "Fall 2026", start_at: "2026-08-24T04:00:00Z", end_at: "2026-12-22T05:00:00Z" };
+    expect(courseVisibility(course(1, "SU2018 Orientation", "New Student Orientation", term), NOW).reason).toBe("administrative");
+  });
 });
