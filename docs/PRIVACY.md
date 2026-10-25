@@ -19,7 +19,8 @@ It is read-only. It never submits, edits or deletes anything on those sites. It 
 - **Stored on your device:** a cache of the above in the extension's local storage, and course files in the folder you choose (or your Downloads folder if you pick that). No data is stored on any server, because there is no server.
 - **Sent anywhere else:** only when you turn on an optional feature, and each is off by default. The browser asks you for the extra site permission when you do.
   - *Due-date sync to GitHub:* a file listing your upcoming deadlines (course, title, due time, link, done or not) is written to the GitHub repository you name, using a token you create and enter. Nothing else is sent.
-  - *AI features (course chat, file picking):* the course text or file names needed for your question are sent to the AI provider (Anthropic) using your own API key. The key is stored only on your device. The provider's own terms govern what it does with that text; we never see it.
+  - *File picking:* file and folder names are sent to the AI provider (Anthropic) using your own API key.
+  - *Course chat:* asked **per course** and off for every course until you tick that course's box. Only then are the few passages found for your question sent to Anthropic using your own API key. The key is stored only on your device. The provider's own terms govern what it does with that text; we never see it.
 - **Never:** no analytics or telemetry, no advertising, no sale or transfer of your data, no human reads your data, no use for anything except showing it to you.
 
 ## Your controls

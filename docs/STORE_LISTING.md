@@ -7,6 +7,7 @@ Built on top of the v2 stack. Review PR: see the PR description.
 - Icons: `extension/public/icon/{16,32,48,96,128}.png` (128 has 16 px transparent padding around 96 px art). Source: `docs/store/icon.svg` (render it at each size on a transparent background).
 - Screenshots (1280x800, taken from the built extension with fictional data, no mockups): `docs/store/1-first-run-consent.png`, `2-upcoming.png`, `3-week-schedule.png`, `4-settings.png`.
 - First-run consent: `extension/src/consent/consent.ts` and `src/ui/ConsentGate.tsx`. Every page shows the disclosure until you click accept; the service worker does no fetching, no alarm refresh and no feed run without it. Settings has "Withdraw consent".
+- Course chat opt-in: per course, off by default (checkbox on the chat page, `src/chat/optin.ts`); the first-run screen says so. Courses cannot be listed on first run because nothing may be read before consent, so the per-course choice lives where the course is picked.
 - Privacy policy: `docs/PRIVACY.md`.
 - Manifest description now says "by default" (the opt-in features are real).
 

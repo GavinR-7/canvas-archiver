@@ -30,7 +30,8 @@ export const DISCLOSURE = {
   ],
   optional: [
     "Off by default: syncing your due dates to your own GitHub repository.",
-    "Off by default: course chat and file picking that send course text or file names to an AI provider, using your own API key.",
+    "Off by default: file picking, which sends file names to an AI provider using your own API key.",
+    "Off by default, and asked course by course: course chat. If you allow a course, passages of its text go to your chosen AI provider (Anthropic) with your own key. Some instructors restrict AI tools, so check your course's policy.",
   ],
   never: [
     "It never changes anything in Canvas, Gradescope or Ed.",
