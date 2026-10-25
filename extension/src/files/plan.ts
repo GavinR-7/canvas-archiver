@@ -61,6 +61,8 @@ export interface CanvasDocument {
   htmlUrl: string | null;
   /** Canvas file ids it attaches or links, in order. Saved beside it; absent means none. */
   attachmentIds?: number[];
+  /** The subset of `attachmentIds` it shows only as embedded images (not attached, not linked). */
+  imageOnlyIds?: number[];
 }
 
 /** A file from a system other than Canvas (Gradescope handouts), fetched with that system's session. */
@@ -97,6 +99,8 @@ export interface PlannedItem {
   content: string | null;
   /** Download needs this system's session cookie (and only that host). Absent means Canvas's signed URL, no cookies. */
   session?: "gradescope";
+  /** An embedded image nothing else names: fetched only from the Canvas origin, never via the downloader (see transfer.ts). */
+  imageOnly?: boolean;
 }
 
 export type SkipReason = "locked" | "no-url" | "unavailable";
@@ -152,6 +156,14 @@ export function planCourse(
   const savedPath = new Map<number, string[]>();
   const entries: { dir: string[]; name: string; fileId?: number; doc?: CanvasDocument; build: (name: string) => PlannedItem }[] = [];
 
+  // An id is image-only when every document that names it shows it as an image and no module holds it.
+  const imageOnly = new Set<number>(documents.flatMap((d) => d.imageOnlyIds ?? []));
+  for (const doc of documents) {
+    const images = new Set(doc.imageOnlyIds ?? []);
+    for (const id of doc.attachmentIds ?? []) if (!images.has(id)) imageOnly.delete(id);
+  }
+  for (const module of modules) for (const id of module.fileIds) imageOnly.delete(id);
+
   const placeFile = (target: string[], file: CanvasFile, original = false) => {
     placed.add(file.id);
     const source = fileSource(file.id);
@@ -170,6 +182,7 @@ export function planCourse(
         modifiedAt: file.updatedAt,
         url: file.url,
         content: null,
+        ...(imageOnly.has(file.id) ? { imageOnly: true } : {}),
       }),
     });
   };

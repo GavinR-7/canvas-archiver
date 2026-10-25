@@ -68,11 +68,50 @@ async function attempt(deps: TransferDeps, url: string, init: RequestInit): Prom
   }
 }
 
+const MAX_IMAGE_HOPS = 4;
+
+/**
+ * An embedded image. Its address comes from file metadata, not from the page, so it is held to the page's own rule:
+ * Canvas origin only. An off-origin address is refused before any request, redirects are read one hop at a time and
+ * an off-origin hop is refused, and neither the session nor the browser downloader is ever used.
+ * A browser hides the target of a cross-origin redirect (`opaqueredirect`); Canvas chose that hop from an address
+ * on its own origin, so it is followed once more without credentials.
+ */
+async function acquireCanvasImage(item: PlannedItem, deps: TransferDeps): Promise<Acquired> {
+  let url = item.url as string;
+  try {
+    assertCanvasOrigin(url, deps.canvasOrigin);
+  } catch {
+    throw new Error("image unavailable: it is not hosted on Canvas");
+  }
+  let status = 0;
+  for (let hop = 0; hop < MAX_IMAGE_HOPS; hop++) {
+    let response = await attempt(deps, url, { credentials: "omit", redirect: "manual" });
+    if (response.type === "opaqueredirect") response = await attempt(deps, url, { credentials: "omit", redirect: "follow" });
+    const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null;
+    if (location) {
+      const next = new URL(location, url).toString();
+      try {
+        assertCanvasOrigin(next, deps.canvasOrigin);
+      } catch {
+        throw new Error("image unavailable: Canvas sent it to another host");
+      }
+      url = next;
+      continue;
+    }
+    if (response.ok && response.body) return { how: "stream", response, method: "fetch" };
+    status = response.status;
+    break;
+  }
+  throw new Error(`image unavailable: Canvas answered ${status || "no usable response"}`);
+}
+
 /**
  * Fetch a Canvas file. Throws only when every route failed; the message names
  * what was tried and never carries the signed URL.
  */
 export async function acquireCanvasFile(item: PlannedItem, deps: TransferDeps, allowDownloads: boolean): Promise<Acquired> {
+  if (item.imageOnly) return acquireCanvasImage(item, deps);
   const url = item.url as string;
   let blocked = false;
   let status = 0;
