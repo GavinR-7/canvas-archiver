@@ -52,11 +52,24 @@ export const archiveLayout: Layout = {
   documentName: (doc) => sanitizeFilename(`${doc.title || doc.kind}.html`, `${doc.kind}.html`),
 };
 
+/**
+ * The contract's course folder is the lowercase department + number with no
+ * space ("ece3030"), even when Canvas says "ECE 3030 FA26" or "ECE3030-001".
+ * Anything that does not look like that falls back to a plain slug.
+ */
+export function ingestCourseSlug(course: Pick<Course, "name" | "courseCode">): string {
+  for (const text of [course.courseCode, course.name]) {
+    const match = /\b([A-Za-z]{2,5})[\s-]?(\d{4})\b/.exec(text ?? "");
+    if (match) return `${match[1]}${match[2]}`.toLowerCase();
+  }
+  return slugify(course.courseCode || course.name, "course").replace(/-/g, "");
+}
+
 export const ingestLayout: Layout = {
   id: "ingest",
   verifyDisk: false,
   needsFolder: true,
-  courseName: (course) => slugify(course.courseCode || course.name, "course").replace(/-/g, ""),
+  courseName: (course) => ingestCourseSlug(course),
   uniqueCourseNames: (names) => uniqueNames(names).map((n) => n.replace(/ \((\d+)\)$/, "-$1")),
   courseDir: (slug) => [slug],
   moduleDir: (dir, module) => [...dir, `${pad(module.position)}-${slugify(module.name, "module")}`],

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { normalizeAnnouncement, normalizeAssignment, normalizeFile, normalizeModule, normalizePage, normalizeSyllabus } from "@/src/files/api";
-import { archiveLayout, ingestLayout, type Layout } from "@/src/files/layout";
+import { archiveLayout, ingestCourseSlug, ingestLayout, type Layout } from "@/src/files/layout";
 import { batchFileName, buildBatch, decide, emptyManifest, hashText, parseManifest, type CourseManifest, type ManifestEntry } from "@/src/files/manifest";
 import { sanitizeFilename, sanitizeSegment, slugify, uniqueNames } from "@/src/files/paths";
 import {
@@ -460,5 +460,16 @@ describe("normalizers", () => {
     expect(
       normalizeModule({ id: 1, name: "W1", position: 4, items: [{ type: "File", content_id: 10 }, { type: "Page", content_id: 11 }, { type: "File" }] }, 0),
     ).toEqual({ id: 1, name: "W1", position: 4, fileIds: [10] });
+  });
+});
+
+describe("ingestCourseSlug", () => {
+  it("reduces Canvas codes to the contract folder name", () => {
+    const c = (courseCode: string, name = "Some Course") => ({ courseCode, name });
+    expect(ingestCourseSlug(c("ECE 3030 FA26"))).toBe("ece3030");
+    expect(ingestCourseSlug(c("CS3700-001"))).toBe("cs3700");
+    expect(ingestCourseSlug(c("PE 1300"))).toBe("pe1300");
+    expect(ingestCourseSlug(c("", "HIST 2369: Modern Europe"))).toBe("hist2369");
+    expect(ingestCourseSlug(c("Orientation", "Orientation"))).toBe("orientation");
   });
 });

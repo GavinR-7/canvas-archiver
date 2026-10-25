@@ -9,6 +9,8 @@
 
 import { useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, validate, type SyncSettings } from "@/src/sync/github";
+import { INBOX_KEY, loadRoot, pickRoot, requestRootAccess, rootAccess, saveRoot, type RootAccess } from "@/src/files/handle-store";
+import { DEFAULT_FEED, loadFeed, loadFeedStatus, saveFeed, type FeedSettings, type FeedStatus } from "@/src/feed/settings";
 import { loadSettings, loadStatus, saveSettings, type SyncStatus } from "@/src/sync/settings";
 
 const GITHUB = ["https://api.github.com/*"];
@@ -21,6 +23,45 @@ export default function App() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const [feed, setFeed] = useState<FeedSettings>(DEFAULT_FEED);
+  const [feedStatus, setFeedStatus] = useState<FeedStatus | null>(null);
+  const [inbox, setInbox] = useState<FileSystemDirectoryHandle | null>(null);
+  const [inboxAccess, setInboxAccess] = useState<RootAccess>("prompt");
+  const [feedNote, setFeedNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadFeed().then(setFeed);
+    void loadFeedStatus().then(setFeedStatus);
+    void loadRoot(INBOX_KEY).then(async (h) => {
+      setInbox(h);
+      if (h) setInboxAccess(await rootAccess(h));
+    });
+  }, []);
+
+  const chooseInbox = async () => {
+    setFeedNote(null);
+    try {
+      const handle = await pickRoot("hq-inbox");
+      await saveRoot(handle, INBOX_KEY);
+      setInbox(handle);
+      setInboxAccess(await requestRootAccess(handle));
+    } catch (error) {
+      if ((error as DOMException).name !== "AbortError") setFeedNote(`Chrome would not use that folder: ${(error as Error).message}`);
+    }
+  };
+
+  const reconnectInbox = async () => {
+    if (inbox) setInboxAccess(await requestRootAccess(inbox));
+  };
+
+  const setFeedEnabled = async (enabled: boolean) => {
+    if (enabled && (!inbox || inboxAccess !== "granted")) return setFeedNote("Choose the inbox folder (and allow access) first.");
+    const next = { ...feed, enabled };
+    await saveFeed(next);
+    setFeed(next);
+    setFeedNote(enabled ? `On. Runs about ${String(next.hour).padStart(2, "0")}:00 each night while Chrome is open.` : "Off.");
+  };
 
   useEffect(() => {
     void loadSettings().then(setSettings);
@@ -94,6 +135,32 @@ export default function App() {
         {status && (
           <p className={`mt-2 text-sm ${status.ok ? "" : "text-red-600 dark:text-red-400"}`}>
             Last sync {new Date(status.at).toLocaleString()}: {status.message}
+          </p>
+        )}
+      </section>
+
+      <section className="mt-10">
+        <h2 className="font-medium">Nightly feed to HQ course knowledge</h2>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Off by default. When on, each night the extension saves new or changed course files into a folder you choose
+          (HQ's course inbox). HQ's own nightly job then files them. Nothing is uploaded anywhere. Chrome has to be open at that
+          time, and it has to still have your permission for the folder (choose "Allow on every visit" if Chrome asks).
+        </p>
+        <p className="mt-2 text-sm">
+          Inbox folder: <strong>{inbox ? inbox.name : "none chosen"}</strong>{" "}
+          {inbox && inboxAccess !== "granted" && (
+            <button type="button" className="underline underline-offset-2" onClick={reconnectInbox}>Reconnect</button>
+          )}{" "}
+          <button type="button" className="underline underline-offset-2" onClick={chooseInbox}>{inbox ? "Change" : "Choose folder"}</button>
+        </p>
+        <label className="mt-3 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={feed.enabled} onChange={(e) => void setFeedEnabled(e.target.checked)} />
+          Send new course files to HQ every night
+        </label>
+        {feedNote && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{feedNote}</p>}
+        {feedStatus && (
+          <p className={`mt-2 text-sm ${feedStatus.ok ? "" : "text-red-600 dark:text-red-400"}`}>
+            Last run {new Date(feedStatus.at).toLocaleString()}: {feedStatus.message}
           </p>
         )}
       </section>
