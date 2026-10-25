@@ -119,3 +119,26 @@ export function EmptyState({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+/** Collapsed-by-default switch for courses the current-term filter hides. */
+export function ShowAllCourses({
+  hiddenCount,
+  showAll,
+  onToggle,
+}: {
+  hiddenCount: number;
+  showAll: boolean;
+  onToggle: () => void;
+}) {
+  if (hiddenCount === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={showAll}
+      className="mt-2 text-xs underline underline-offset-2 hover:no-underline"
+    >
+      {showAll ? "Hide old and administrative courses" : `Show all (${hiddenCount} older or administrative hidden)`}
+    </button>
+  );
+}

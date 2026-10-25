@@ -42,7 +42,7 @@ export default function Picker({ courses, tasks, root, ready }: Props) {
   const [plan, setPlan] = useState<CoursePlan | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  const course = courses.find((c) => c.id === (courseId ?? courses[0]?.id)) ?? null;
+  const course = courses.find((c) => c.id === courseId) ?? courses[0] ?? null;
   const exams = useMemo(
     () =>
       tasks

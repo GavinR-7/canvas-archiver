@@ -7,7 +7,7 @@
  * run; a second run skips what is already on disk.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { fetchCourseSources } from "@/src/files/api";
 import { fetchGradescopeFiles } from "@/src/gradescope/api";
@@ -26,7 +26,9 @@ import { loadDirBindings, rememberDirBindings } from "@/src/files/dirs";
 import { planCourses, summarize, type CoursePlan } from "@/src/files/plan";
 import { looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
 import { downloadsSink, folderManifestStore, folderSink, storageManifestStore } from "@/src/files/sinks";
-import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
+import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
+import { selectedIds } from "@/src/canvas/visibility";
+import { useCourseFilter } from "@/src/ui/useCourseFilter";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 import Picker from "./Picker";
 import { runFeed } from "@/src/feed/run";
@@ -83,8 +85,13 @@ export default function App() {
     })();
   }, [loading, snapshot.courses]);
 
-  const courses = snapshot.courses.filter((c) => !c.restricted);
-  const selected = chosen ?? new Set(courses.map((c) => c.id));
+  const allCourses = useMemo(() => snapshot.courses.filter((c) => !c.restricted), [snapshot.courses]);
+  const filter = useCourseFilter("files", allCourses);
+  const courses = filter.courses;
+  // Default selection is the current-term list, not whatever Show all reveals. Once the user has chosen, the set
+  // is theirs: a course hidden by the filter but already chosen stays chosen and
+  // is still read by the plan below.
+  const selected = selectedIds(filter.current, chosen);
 
   const choose = useCallback(async () => {
     setProblem(null);
@@ -113,7 +120,7 @@ export default function App() {
     setPlans(null);
     try {
       const inputs: Parameters<typeof withGradescope>[0] = [];
-      for (const course of courses.filter((c) => selected.has(c.id))) {
+      for (const course of allCourses.filter((c) => selected.has(c.id))) {
         setStatus(`Reading ${course.courseCode || course.name}…`);
         inputs.push({ course, sources: await fetchCourseSources(course.id) });
       }
@@ -143,7 +150,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [courses, selected, layout]);
+  }, [allCourses, selected, layout]);
 
   const start = useCallback(
     async (useDownloads: boolean) => {
@@ -245,6 +252,7 @@ export default function App() {
             ))}
           </ul>
         )}
+        <ShowAllCourses hiddenCount={filter.hidden.length} showAll={filter.showAll} onToggle={filter.toggle} />
         <button type="button" className={`${button} mt-3`} disabled={busy || selected.size === 0} onClick={buildPlan}>
           Preview what will be saved
         </button>
