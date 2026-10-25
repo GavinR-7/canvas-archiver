@@ -14,16 +14,18 @@ const ENDPOINT = "https://api.anthropic.com/v1/messages";
 export interface AiSettings {
   enabled: boolean;
   apiKey: string;
+  /** Separate opt-in: passages of course TEXT may be sent (the file picker sends names only). */
+  allowContent: boolean;
 }
 
-export const DEFAULT_AI: AiSettings = { enabled: false, apiKey: "" };
+export const DEFAULT_AI: AiSettings = { enabled: false, apiKey: "", allowContent: false };
 
 const KEY = "ai.settings";
 
 export async function loadAi(): Promise<AiSettings> {
   try {
     const stored = (await chrome.storage.local.get(KEY))[KEY] as Partial<AiSettings> | undefined;
-    return { enabled: stored?.enabled === true, apiKey: typeof stored?.apiKey === "string" ? stored.apiKey : "" };
+    return { enabled: stored?.enabled === true, apiKey: typeof stored?.apiKey === "string" ? stored.apiKey : "", allowContent: stored?.allowContent === true };
   } catch {
     return DEFAULT_AI;
   }
@@ -106,4 +108,23 @@ export async function askModel(settings: AiSettings, context: ModelContext, cand
   const body = (await response.json()) as { content?: { type: string; text?: string }[] };
   const text = (body.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
   return parseReply(text, candidates);
+}
+
+/** One plain completion. Used by the course chat; the picker has its own prompt above. */
+export async function complete(settings: AiSettings, system: string, user: string, signal?: AbortSignal): Promise<string> {
+  if (!settings.apiKey) throw new Error("No API key. Add one in Settings.");
+  const response = await fetch(ENDPOINT, {
+    method: "POST",
+    signal,
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({ model: MODEL, max_tokens: 2500, system, messages: [{ role: "user", content: user }] }),
+  });
+  if (!response.ok) throw new Error(response.status === 401 ? "The API key was rejected." : `The model service answered ${response.status}.`);
+  const body = (await response.json()) as { content?: { type: string; text?: string }[] };
+  return (body.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
 }
