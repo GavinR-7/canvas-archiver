@@ -10,7 +10,7 @@
  */
 
 import { easternDay } from "./merge";
-import { zonedToUtc } from "./extract";
+import { resolveWallTime } from "./extract";
 import type { Course, Task } from "@/src/types/canvas";
 
 export interface ManualExam {
@@ -29,7 +29,8 @@ export const MAX_ENTRIES = 20;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-export type EntryResult = { ok: true; entry: ManualExam } | { ok: false; error: string };
+/** `notice` is set when the entry is kept but the person should know how it was read (a time that happens twice). */
+export type EntryResult = { ok: true; entry: ManualExam; notice?: string } | { ok: false; error: string };
 
 /** Check one entry as typed. A date that does not exist (2026-02-30) is rejected, not rolled over. */
 export function validateEntry(input: { date: string; time?: string; label: string }): EntryResult {
@@ -46,22 +47,29 @@ export function validateEntry(input: { date: string; time?: string; label: strin
   if (time && !TIME.test(time)) return { ok: false, error: "Enter the time as HH:MM, 24 hour." };
   if (!label) return { ok: false, error: "Add a label such as Prelim 2 or Final." };
   if (label.length > 80) return { ok: false, error: "Keep the label under 80 characters." };
-  return { ok: true, entry: time ? { date, time, label } : { date, label } };
+  if (!time) return { ok: true, entry: { date, label } };
+  const wall = resolveWallTime(y, mo, d, Number(time.slice(0, 2)), Number(time.slice(3)));
+  if (wall.status === "gap") return { ok: false, error: `${time} does not exist on ${date}: the clocks skip forward that night. Pick a time that does.` };
+  const entry = { date, time, label };
+  return wall.status === "ambiguous"
+    ? { ok: true, entry, notice: `${time} happens twice on ${date} (clocks go back). Used the first one, daylight time (UTC-4).` }
+    : { ok: true, entry };
 }
 
 const order = (a: ManualExam, b: ManualExam) =>
   a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.label.localeCompare(b.label);
 
 /** Add an entry to a list: validated, a repeat of the same date, time and label ignored, kept in date order. */
-export function addEntry(list: ManualExam[], input: { date: string; time?: string; label: string }): { list: ManualExam[]; error: string | null } {
+export function addEntry(list: ManualExam[], input: { date: string; time?: string; label: string }): { list: ManualExam[]; error: string | null; notice?: string } {
   const result = validateEntry(input);
   if (!result.ok) return { list, error: result.error };
+  const notice = result.notice;
   const e = result.entry;
   if (list.some((x) => x.date === e.date && (x.time ?? "") === (e.time ?? "") && x.label.toLowerCase() === e.label.toLowerCase())) {
-    return { list, error: null };
+    return { list, error: null, notice };
   }
   if (list.length >= MAX_ENTRIES) return { list, error: `At most ${MAX_ENTRIES} entries per course.` };
-  return { list: [...list, e].sort(order), error: null };
+  return { list: [...list, e].sort(order), error: null, notice };
 }
 
 export function removeEntry(list: ManualExam[], index: number): ManualExam[] {
@@ -94,7 +102,9 @@ export function manualExamTasks(entries: ManualExams, courses: Course[]): Task[]
     for (const e of entries[String(course.id)] ?? []) {
       const [y, mo, d] = e.date.split("-").map(Number) as [number, number, number];
       const [h, mi] = e.time ? (e.time.split(":").map(Number) as [number, number]) : [23, 59];
-      const dueAt = zonedToUtc(y, mo, d, h, mi).toISOString();
+      const wall = resolveWallTime(y, mo, d, h, mi);
+      if (!wall.date) continue; // a time the clocks skip cannot be stored: validation refuses it, and old data is dropped here
+      const dueAt = wall.date.toISOString();
       tasks.push({
         id: `manual:${course.id}:${e.date}:${slug(e.label)}`,
         source: "manual",

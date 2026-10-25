@@ -24,6 +24,7 @@ function ExamDates() {
   const [entries, setEntries] = useState<ManualExams>({});
   const [draft, setDraft] = useState<Record<number, { date: string; time: string; label: string }>>({});
   const [errors, setErrors] = useState<Record<number, string>>({});
+  const [notices, setNotices] = useState<Record<number, string>>({});
   useEffect(() => {
     void loadSnapshot().then((s) => setCourses(splitCourses(s.courses.filter((c) => !c.restricted), new Date()).shown));
     void loadManualExams().then(setEntries);
@@ -37,6 +38,7 @@ function ExamDates() {
     const d = draft[course.id] ?? { date: "", time: "", label: "" };
     const result = addEntry(entries[String(course.id)] ?? [], d);
     setErrors({ ...errors, [course.id]: result.error ?? "" });
+    setNotices({ ...notices, [course.id]: result.notice ?? "" });
     if (result.error) return;
     await update(course, result.list);
     setDraft({ ...draft, [course.id]: { date: "", time: "", label: "" } });
@@ -70,6 +72,7 @@ function ExamDates() {
               <label>Label<input className={input} placeholder="Prelim 2" value={d.label} onChange={(e) => set({ label: e.target.value })} /></label>
               <button type="button" className={button} onClick={() => void add(course)}>Add</button>
             </div>
+            {notices[course.id] && <p role="status" className="mt-1 text-sm">{notices[course.id]}</p>}
             {errors[course.id] && <p role="alert" className="mt-1 text-sm text-red-600 dark:text-red-400">{errors[course.id]}</p>}
           </div>
         );

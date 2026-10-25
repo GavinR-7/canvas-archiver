@@ -70,3 +70,29 @@ describe("merge with parsed exams", () => {
     expect(buildDueFile(tasks, now).items[0]).toMatchObject({ source: "manual", kind: "exam", unconfirmed: false, dueDay: "2026-11-05" });
   });
 });
+
+describe("review fixes (T-531)", () => {
+  const sibling = { ...course, id: 8, name: "Signals (section 2)", htmlUrl: "https://canvas/courses/8" } as Course;
+  it("an entry for one course never replaces a parsed twin in another course that shares the catalog code", () => {
+    const parsedOther = candidateToTask({ title: "Prelim 2", kind: "exam", at: "2026-11-06T00:30:00.000Z", allDay: false, evidence: "Prelim 2 Nov 5" } as never, sibling, "syllabus", null);
+    const exams = mergeTasks(withManualExams([parsedOther], { "7": [{ date: "2026-11-05", time: "19:30", label: "Prelim 2" }] }, [course, sibling]));
+    expect(exams.map((t) => [t.source, t.courseId])).toEqual([["manual", 7], ["syllabus", 8]]);
+  });
+  it("still replaces a parsed twin in the same course", () => {
+    const parsed = candidateToTask({ title: "Prelim 2", kind: "exam", at: "2026-11-06T00:30:00.000Z", allDay: false, evidence: "x" } as never, course, "syllabus", null);
+    expect(mergeTasks(withManualExams([parsed], { "7": [{ date: "2026-11-05", time: "19:30", label: "Prelim 2" }] }, [course])).map((t) => t.source)).toEqual(["manual"]);
+  });
+  it("rejects a time the spring-forward night skips", () => {
+    const r = validateEntry({ date: "2026-03-08", time: "02:30", label: "Quiz" });
+    expect(r.ok).toBe(false);
+    expect(validateEntry({ date: "2026-03-08", time: "03:30", label: "Quiz" }).ok).toBe(true);
+    expect(manualExamTasks({ "7": [{ date: "2026-03-08", time: "02:30", label: "Quiz" }] }, [course])).toHaveLength(0);
+  });
+  it("resolves a time that happens twice to the first one and says so", () => {
+    const r = validateEntry({ date: "2026-11-01", time: "01:30", label: "Quiz" });
+    expect(r).toMatchObject({ ok: true, notice: expect.stringMatching(/twice.*first.*UTC-4/) });
+    expect(manualExamTasks({ "7": [{ date: "2026-11-01", time: "01:30", label: "Quiz" }] }, [course])[0]?.dueAt).toBe("2026-11-01T05:30:00.000Z");
+    expect(addEntry([], { date: "2026-11-01", time: "01:30", label: "Quiz" }).notice).toMatch(/twice/);
+    expect(validateEntry({ date: "2026-11-01", time: "03:30", label: "Quiz" })).not.toHaveProperty("notice");
+  });
+});
