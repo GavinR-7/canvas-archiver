@@ -29,6 +29,7 @@ export interface Layout {
   looseDir(courseDir: string[], canvasFolders: string[]): string[];
   documentDir(courseDir: string[], kind: Exclude<CanvasDocument["kind"], "syllabus">): string[];
   syllabusDir(courseDir: string[]): string[];
+  externalDir(courseDir: string[], system: "gradescope"): string[];
   documentName(doc: CanvasDocument): string;
 }
 
@@ -49,6 +50,7 @@ export const archiveLayout: Layout = {
   looseDir: (dir, folders) => [...dir, "Course files", ...folders],
   documentDir: (dir, kind) => [...dir, KIND_FOLDER[kind]],
   syllabusDir: (dir) => [...dir, "Syllabus"],
+  externalDir: (dir) => [...dir, "Gradescope"],
   documentName: (doc) => sanitizeFilename(`${doc.title || doc.kind}.html`, `${doc.kind}.html`),
 };
 
@@ -76,6 +78,7 @@ export const ingestLayout: Layout = {
   looseDir: (dir) => [...dir, "files"],
   documentDir: (dir) => [...dir, "files"],
   syllabusDir: (dir) => [...dir, "_syllabus"],
+  externalDir: (dir) => [...dir, "files"],
   documentName: (doc) => {
     const stamp = doc.kind === "announcement" ? `${day(doc.modifiedAt)}-` : "";
     return `${doc.kind}-${stamp}${slugify(doc.title, doc.key)}.html`;
