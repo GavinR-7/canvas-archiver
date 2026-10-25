@@ -23,7 +23,8 @@ const PATH = /^(?!\/)(?!.*\.\.)[A-Za-z0-9_.\/-]+$/;
 
 export function validate(settings: SyncSettings): string | null {
   if (!REPO.test(settings.repo)) return "Repository must look like owner/name.";
-  if (!PATH.test(settings.path)) return "File path must be relative, with no '..'.";
+  if (!PATH.test(settings.path) || settings.path.split("/").some((part) => !part || part === ".")) return "File path must be relative, with no '..'.";
+  if (settings.path.split("/").at(-1) === "schedule.json") return "Choose a deadline file other than schedule.json (reserved for class meetings).";
   if (!settings.token) return "Paste a fine-grained token with contents: read and write on that one repository.";
   return null;
 }
@@ -59,6 +60,33 @@ function explain(status: number): string {
   return `GitHub answered ${status}.`;
 }
 
+// Below MV3's 30-second fetch limit. Includes reading the response body.
+const REQUEST_TIMEOUT_MS = 15_000;
+class RequestTimeout extends Error {}
+class InvalidContents extends Error {}
+
+async function request(url: string, init: RequestInit, readBody: boolean, doFetch: Fetch) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await doFetch(url, { ...init, credentials: "omit", redirect: "error", signal: controller.signal });
+        const body: unknown = readBody && response.ok ? await response.json() : null;
+        return { response, body };
+      })(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new RequestTimeout());
+          controller.abort();
+        }, REQUEST_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Create or update `settings.path` with `content`, unless identical per `same`.
  * One retry when the file's sha went stale between read and write.
@@ -77,24 +105,29 @@ export async function putFile(
   for (let attempt = 0; attempt < 2; attempt++) {
     let sha: string | undefined;
     try {
-      const read = await doFetch(url, { headers: headers(settings.token), cache: "no-store" });
+      const { response: read, body } = await request(url, { headers: headers(settings.token), cache: "no-store" }, true, doFetch);
       if (read.ok) {
-        const body = (await read.json()) as { sha?: string; content?: string };
+        if (!body || typeof body !== "object" || !("sha" in body) || typeof body.sha !== "string" || !body.sha ||
+            !("content" in body) || typeof body.content !== "string") throw new InvalidContents();
         sha = body.sha;
-        if (body.content && same(fromBase64(body.content))) return { status: "unchanged" };
+        let existing: string;
+        try { existing = fromBase64(body.content); } catch { throw new InvalidContents(); }
+        if (same(existing)) return { status: "unchanged" };
       } else if (read.status !== 404) {
         return { status: "failed", message: explain(read.status) };
       }
 
-      const write = await doFetch(url, {
+      const { response: write } = await request(url, {
         method: "PUT",
         headers: headers(settings.token),
         body: JSON.stringify({ message: commitMessage, content: toBase64(content), ...(sha ? { sha } : {}) }),
-      });
+      }, false, doFetch);
       if (write.ok) return { status: "updated", created: sha === undefined };
       if ((write.status === 409 || write.status === 422) && attempt === 0) continue;
       return { status: "failed", message: explain(write.status) };
-    } catch {
+    } catch (error) {
+      if (error instanceof RequestTimeout) return { status: "failed", message: "GitHub timed out. Try syncing again when your connection is ready." };
+      if (error instanceof InvalidContents) return { status: "failed", message: "GitHub did not return a readable file with a SHA; nothing was written." };
       // Never include the error text: some runtimes echo request headers.
       return { status: "failed", message: "Could not reach GitHub. Check your connection." };
     }

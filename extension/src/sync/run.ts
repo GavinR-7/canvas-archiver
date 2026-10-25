@@ -26,6 +26,7 @@ export async function syncDue(
   const outcome = await putFile(settings, serialize(file), (existing) => sameContent(existing, file), `chore: update ${settings.path} (${file.items.length} deadlines)`, doFetch);
   // Classes go in the same pass, only when the person has entered some.
   let scheduleNote = "";
+  let scheduleFailed = false;
   if (classes.length > 0 && outcome.status !== "failed") {
     const schedule = buildScheduleFile(classes, now);
     const sent = await putFile(
@@ -35,11 +36,12 @@ export async function syncDue(
       `chore: update schedule.json (${classes.length} meetings)`,
       doFetch,
     );
+    scheduleFailed = sent.status === "failed";
     scheduleNote = sent.status === "failed" ? ` Schedule not sent: ${sent.message}` : ` Schedule: ${sent.status === "unchanged" ? "up to date" : "written"}.`;
   }
   const message =
     outcome.status === "failed" ? outcome.message : outcome.status === "unchanged" ? `Up to date (${file.items.length} deadlines).` : `Wrote ${file.items.length} deadlines.`;
   const full = message + scheduleNote;
-  await saveStatus({ at: now.toISOString(), ok: outcome.status !== "failed", message: full });
-  return outcome;
+  await saveStatus({ at: now.toISOString(), ok: outcome.status !== "failed" && !scheduleFailed, message: full });
+  return scheduleFailed ? { status: "failed", message: full } : outcome;
 }
