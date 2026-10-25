@@ -38,6 +38,12 @@ describe("exam dates from syllabus text", () => {
     expect(found.every((c) => !c.evidence.includes("20%"))).toBe(true);
   });
 
+  it("does not turn a policy sentence plus the next line's homework date into an exam", () => {
+    const found = extractExamDates("Exams are closed-book\nHomework 7 is due October 28", NOW);
+    expect(found).toEqual([]);
+    expect(extractExamDates("Prelim 1\nThursday, October 8, 7:30 PM", NOW)).toHaveLength(1);
+  });
+
   it("reads a schedule table row by row", () => {
     const found = extractExamDates(CS_TABLE, NOW);
     expect(found.map((c) => day(c.at)).sort()).toEqual(["2026-10-13", "2026-12-01", "2026-12-15"]);
@@ -112,13 +118,27 @@ describe("Ed: one notice per sync", () => {
     expect(result.tasks).toHaveLength(1);
   });
 
-  it("a sign-in problem stops at once as a single error", async () => {
+  it("only a sign-in failure on the user endpoint raises the single notice", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
       calls.push(url);
-      return url.includes("/api/user") ? json(user) : json({}, 401);
+      return json({}, 401);
     });
     await expect(fetchEdTasks(courses, 240, NOW)).rejects.toThrow(/not signed in/i);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a 403 on one course after a valid user is that course's missed entry; the others are kept and the loop continues", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("/api/user")) return json(user);
+      requested.push(url);
+      if (url.includes("/courses/12/")) return json({}, 403);
+      return json({ threads: [{ id: 1, type: "announcement", title: "Prelim 1", document: "<p>Prelim 1 is on Oct 13, 7:30 PM</p>" }] });
+    });
+    const result = await fetchEdTasks(courses, 240, NOW);
+    expect(result.missed).toEqual(["CS 3700"]);
+    expect(requested.some((u) => u.includes("/courses/13/"))).toBe(true);
+    expect(result.tasks.map((t) => t.courseId).sort()).toEqual([1, 3]);
   });
 });

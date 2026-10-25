@@ -27,10 +27,11 @@ export class EdSessionExpiredError extends SessionExpiredError {
   }
 }
 
-async function getJson(path: string): Promise<Raw> {
+/** `global` is true for the user endpoint: only there does a 401/403 mean the sign-in is gone. On a course it means that course is closed to us. */
+async function getJson(path: string, global = false): Promise<Raw> {
   const url = assertCanvasOrigin(`${ED_API_ORIGIN}${path}`, ED_API_ORIGIN);
   const response = await fetch(url, { method: "GET", credentials: "include", headers: { Accept: "application/json" } });
-  if (response.status === 401 || response.status === 403) throw new EdSessionExpiredError();
+  if (global && (response.status === 401 || response.status === 403)) throw new EdSessionExpiredError();
   if (!response.ok) throw new CanvasError(`Ed returned ${response.status} for ${path}.`);
   return (await response.json()) as Raw;
 }
@@ -117,7 +118,7 @@ export interface EdResult {
  * course neither blanks the rest nor produces a message of its own.
  */
 export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date()): Promise<EdResult> {
-  const edCourses = normalizeEdCourses(await getJson("/api/user"));
+  const edCourses = normalizeEdCourses(await getJson("/api/user", true));
   const tasks: Task[] = [];
   const missed: string[] = [];
   for (const ed of edCourses) {
