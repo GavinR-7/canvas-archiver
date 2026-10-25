@@ -64,6 +64,22 @@ describe("GitHub request reliability", () => {
 });
 
 describe("combined deadline and schedule status", () => {
+  it("writes both distinct destinations on a successful run", async () => {
+    vi.stubGlobal("chrome", { storage: { local: { set: vi.fn(async () => {}) } } });
+    const writes: string[] = [];
+    const doFetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (init?.method === "PUT") { writes.push(String(url)); return reply(201); }
+      return reply(404);
+    }) as unknown as typeof fetch;
+    expect(await syncDue(snapshot, settings, new Date("2026-10-25T12:00:00Z"), doFetch, classes)).toMatchObject({ status: "updated" });
+    expect(writes.map((url) => url.split("/").at(-1))).toEqual(["due.json", "schedule.json"]);
+  });
+  it("refuses a deadline destination reserved for the companion schedule", async () => {
+    vi.stubGlobal("chrome", { storage: { local: { set: vi.fn(async () => {}) } } });
+    const doFetch = vi.fn() as unknown as typeof fetch;
+    expect(await syncDue(snapshot, { ...settings, path: "schedule.json" }, new Date(), doFetch, classes)).toMatchObject({ status: "failed" });
+    expect(doFetch).not.toHaveBeenCalled();
+  });
   it("marks a schedule upload failure as failed even after due.json succeeded", async () => {
     const set = vi.fn(async () => {});
     vi.stubGlobal("chrome", { storage: { local: { set } } });

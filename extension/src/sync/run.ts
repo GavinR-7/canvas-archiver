@@ -1,6 +1,6 @@
 import type { Snapshot } from "@/src/lib/messages";
 import { buildDueFile, sameContent, serialize } from "./due";
-import { putFile, type SyncOutcome, type SyncSettings } from "./github";
+import { putFile, validate, type SyncOutcome, type SyncSettings } from "./github";
 import { buildScheduleFile, sameSchedule, serializeSchedule, type ClassMeeting } from "@/src/schedule/model";
 import { saveStatus } from "./settings";
 
@@ -16,6 +16,11 @@ export async function syncDue(
   classes: ClassMeeting[] = [],
 ): Promise<SyncOutcome | null> {
   if (!settings.enabled) return null;
+  const problem = validate(settings);
+  if (problem) {
+    await saveStatus({ at: now.toISOString(), ok: false, message: problem });
+    return { status: "failed", message: problem };
+  }
   // Nothing fetched yet (or Canvas failed with an empty cache): never overwrite a good file with an empty one.
   if (!snapshot.fetchedAt || snapshot.tasks.length === 0) {
     const outcome: SyncOutcome = { status: "failed", message: "No deadlines loaded yet; sync skipped." };

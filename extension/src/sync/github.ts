@@ -21,12 +21,17 @@ export const API = "https://api.github.com";
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PATH = /^(?!\/)(?!.*\.\.)[A-Za-z0-9_.\/-]+$/;
 
-export function validate(settings: SyncSettings): string | null {
+function validateFile(settings: SyncSettings): string | null {
   if (!REPO.test(settings.repo)) return "Repository must look like owner/name.";
   if (!PATH.test(settings.path) || settings.path.split("/").some((part) => !part || part === ".")) return "File path must be relative, with no '..'.";
-  if (settings.path.split("/").at(-1) === "schedule.json") return "Choose a deadline file other than schedule.json (reserved for class meetings).";
   if (!settings.token) return "Paste a fine-grained token with contents: read and write on that one repository.";
   return null;
+}
+
+/** Validate the user-selected deadline destination; the companion schedule uses validateFile. */
+export function validate(settings: SyncSettings): string | null {
+  return validateFile(settings) ?? (settings.path.split("/").at(-1) === "schedule.json"
+    ? "Choose a deadline file other than schedule.json (reserved for class meetings)." : null);
 }
 
 export type SyncOutcome =
@@ -98,7 +103,7 @@ export async function putFile(
   commitMessage: string,
   doFetch: Fetch = fetch,
 ): Promise<SyncOutcome> {
-  const problem = validate(settings);
+  const problem = validateFile(settings);
   if (problem) return { status: "failed", message: problem };
   const url = `${API}/repos/${settings.repo}/contents/${settings.path}`;
 
