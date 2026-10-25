@@ -14,6 +14,7 @@
 
 import {
   batchFileName,
+  newRunId,
   buildBatch,
   decide,
   emptyManifest,
@@ -73,6 +74,8 @@ export interface RunOptions {
   concurrency?: number;
   signal?: AbortSignal;
   now?: () => Date;
+  /** Names this run's staging folder and batch file; random per run unless a test fixes it. */
+  runId?: string;
   onProgress?: (done: number, total: number, last: ItemOutcome) => void;
 }
 
@@ -83,7 +86,7 @@ export async function runArchive(
   layout: Layout,
   sink: FileSink,
   store: ManifestStore | null,
-  { concurrency = 3, signal, now = () => new Date(), onProgress }: RunOptions = {},
+  { concurrency = 3, signal, now = () => new Date(), runId = newRunId(), onProgress }: RunOptions = {},
 ): Promise<RunResult> {
   const started = Date.now();
   const keep = store !== null && sink.keepsRecords;
@@ -91,7 +94,7 @@ export async function runArchive(
 
   // Ingest: every run stages its bytes under its own folder, so a later run can never
   // overwrite what an earlier, not-yet-ingested batch still points at.
-  const stageDir = layout.id === "ingest" && sink.keepsRecords ? ["_staged", batchFileName(batchAt).replace(/\.json$/, "")] : null;
+  const stageDir = layout.id === "ingest" && sink.keepsRecords ? ["_staged", batchFileName(batchAt, runId).replace(/\.json$/, "")] : null;
 
   const manifests = new Map<number, CourseManifest>();
   const outcomes: ItemOutcome[] = [];
@@ -196,7 +199,7 @@ export async function runArchive(
   let batch: string | null = null;
   if (layout.id === "ingest" && sink.keepsRecords && saved.length > 0) {
     const courses = Object.fromEntries(active.map((plan) => [plan.folder, plan.courseId]));
-    const name = batchFileName(batchAt);
+    const name = batchFileName(batchAt, runId);
     await sink.writeText(["_batches", name], `${JSON.stringify(buildBatch(batchAt, saved, courses), null, 2)}\n`);
     batch = name;
   }

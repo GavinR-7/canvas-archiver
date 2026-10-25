@@ -139,10 +139,25 @@ describe("a later feed cannot overwrite an unconsumed batch", () => {
     const entryTwo = batchTwo.files[0];
     expect(entryOne.path).toBe(entryTwo.path); // same destination in the knowledge base
     expect(entryOne.stage).not.toBe(entryTwo.stage); // different bytes on disk
-    expect(entryOne.stage).toMatch(/^_staged\/2026-10-24T020000\/cs1234\//);
+    expect(entryOne.stage).toMatch(/^_staged\/2026-10-24T020000-[0-9a-f]{8}\/cs1234\//);
     expect(files.get(entryOne.stage)).toContain("VERSION_ONE");
     expect(files.get(entryTwo.stage)).toContain("VERSION_TWO");
     expect(hashText(files.get(entryOne.stage) as string)).toBe(entryOne.sha256);
+  });
+
+  it("two runs starting in the same UTC second keep separate batches and staged bytes (Anvil T-465 P2)", async () => {
+    const { files, sink } = disk();
+    const store = memoryStore();
+    const at = () => new Date("2026-10-25T02:00:00.100Z");
+    const one = await runArchive(planCourses([input(1, "RUN_ONE")], ingestLayout), ingestLayout, sink, store, { now: at });
+    const two = await runArchive(planCourses([input(1, "RUN_TWO")], ingestLayout), ingestLayout, sink, store, { now: at });
+    expect(one.batch).not.toBe(two.batch);
+    expect(one.batch).toMatch(/^2026-10-25T020000-[0-9a-f]{8}\.json$/);
+    const entryOne = JSON.parse(files.get(`_batches/${one.batch}`) as string).files[0];
+    const entryTwo = JSON.parse(files.get(`_batches/${two.batch}`) as string).files[0];
+    expect(entryOne.stage).not.toBe(entryTwo.stage);
+    expect(files.get(entryOne.stage)).toContain("RUN_ONE");
+    expect(files.get(entryTwo.stage)).toContain("RUN_TWO");
   });
 
   it("the archive layout is untouched: files go straight to their path, no stage", async () => {

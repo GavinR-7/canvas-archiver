@@ -160,7 +160,16 @@ export function buildBatch(createdAt: Date, saved: SavedRecord[], courses: Recor
   };
 }
 
-/** `2026-10-15T14:03:09.123Z` → `2026-10-15T140309`, the contract's file name (no colons: Windows). */
-export function batchFileName(at: Date): string {
-  return `${at.toISOString().replace(/\.\d+Z$/, "").replace(/:/g, "")}.json`;
+/**
+ * `2026-10-15T14:03:09.123Z` → `2026-10-15T140309.json`, the contract's file name (no colons: Windows).
+ * `runId` makes it `2026-10-15T140309-<runId>.json`: the timestamp prefix keeps names chronological for
+ * hq-ingest, the id keeps two runs in the same second from sharing a name.
+ */
+export function batchFileName(at: Date, runId?: string): string {
+  return `${at.toISOString().replace(/\.\d+Z$/, "").replace(/:/g, "")}${runId ? `-${runId}` : ""}.json`;
+}
+
+/** Eight random hex characters, one per run. */
+export function newRunId(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
