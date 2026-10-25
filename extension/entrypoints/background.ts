@@ -25,6 +25,7 @@ import {
   UPCOMING_DAYS,
 } from "@/src/canvas/api";
 import { CanvasError, SessionExpiredError } from "@/src/canvas/errors";
+import type { Task } from "@/src/types/canvas";
 import {
   EMPTY_SNAPSHOT,
   type Request,
@@ -33,6 +34,8 @@ import {
 } from "@/src/lib/messages";
 import { fetchGradescopeTasks } from "@/src/gradescope/api";
 import { fetchEdTasks } from "@/src/ed/api";
+import { syllabusFileTasks } from "@/src/dates/syllabus-files";
+import { browserSyllabusDeps } from "@/src/dates/syllabus-reader";
 import { fetchSyllabusTasks } from "@/src/dates/syllabus";
 import { EXAM_DAYS, inWindow, isExamTask } from "@/src/dates/exams";
 import { mergeTasks } from "@/src/dates/merge";
@@ -101,16 +104,30 @@ async function refresh(): Promise<Snapshot> {
     // Dates written in prose (syllabus, Ed announcements) are best-effort: each
     // fails alone, and its previous result is kept rather than blanking.
     const current = courses.filter((c) => !c.restricted);
-    const syllabus = await fetchSyllabusTasks(current, EXAM_DAYS).catch((error: unknown) => {
+    const syllabusPage = await fetchSyllabusTasks(current, EXAM_DAYS).catch((error: unknown) => {
       console.warn("[canvas-archiver] syllabus dates failed", error);
       return previousAll.filter((task) => task.source === "syllabus");
     });
-    let edError: SnapshotError | null = null;
-    const ed = await fetchEdTasks(current, EXAM_DAYS).catch((error: unknown) => {
-      console.warn("[canvas-archiver] ed refresh failed", error);
-      edError = describeError(error, "Ed Discussion");
-      return previousAll.filter((task) => task.source === "ed");
+    // Syllabus PDFs and text files: read once per changed file, never fails the refresh.
+    const syllabusFiles = await syllabusFileTasks(current, EXAM_DAYS, browserSyllabusDeps()).catch((error: unknown) => {
+      console.warn("[canvas-archiver] syllabus files failed", error);
+      return { tasks: [] as Task[], unreadable: 0 };
     });
+    const syllabus = [...syllabusPage, ...syllabusFiles.tasks];
+    let edError: SnapshotError | null = null;
+    // One notice per sync: a sign-in problem, or the list of courses Ed could not be read for.
+    const ed = await fetchEdTasks(current, EXAM_DAYS)
+      .then((result) => {
+        if (result.missed.length > 0) {
+          edError = { kind: "other", message: `Ed Discussion data is missing for ${result.missed.join(", ")}. The other courses are up to date.` };
+        }
+        return result.tasks;
+      })
+      .catch((error: unknown) => {
+        console.warn("[canvas-archiver] ed refresh failed", error);
+        edError = describeError(error, "Ed Discussion");
+        return previousAll.filter((task) => task.source === "ed");
+      });
 
     const gs = await gradescope;
     const all = [...tasks, ...gs.tasks, ...syllabus, ...ed];

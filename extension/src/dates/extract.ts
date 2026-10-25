@@ -114,9 +114,17 @@ function cleanTitle(line: string, removals: string[]): string {
 export function extractExamDates(html: string, now: Date): DateCandidate[] {
   const found: DateCandidate[] = [];
 
-  for (const line of toLines(html)) {
+  const lines = toLines(html);
+  for (const [index, own] of lines.entries()) {
+    let line = own;
     const keyword = KEYWORD.exec(line);
     if (!keyword) continue;
+    // PDF text often puts the date on the next line ("Prelim 1" / "Thursday, October 8, 7:30 PM").
+    // Join it only when this line has no date and the next has one but no exam word of its own.
+    const next = lines[index + 1];
+    if (next && line.length <= 60 && !WRITTEN_DATE.test(line) && !NUMERIC_DATE.test(line) && !KEYWORD.test(next) && (WRITTEN_DATE.test(next) || NUMERIC_DATE.test(next))) {
+      line = `${line} ${next}`;
+    }
     // "Exams are closed-book" is a policy sentence, not a date.
     const written = WRITTEN_DATE.exec(line);
     const numeric = written ? null : NUMERIC_DATE.exec(line);
