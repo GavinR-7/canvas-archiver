@@ -10,10 +10,14 @@
  * Pure: no network, no file system.
  */
 
+import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
+
 const FILE_ID = /\/files\/(\d+)(?![\d])/;
 const ANCHOR = /<a\b[^>]*>/gi;
 const HREF = /(\shref\s*=\s*)("[^"]*"|'[^']*')/i;
 const ENDPOINT = /\sdata-api-endpoint\s*=\s*("[^"]*"|'[^']*')/i;
+const IMG = /<img\b[^>]*>/gi;
+const SRC = /(\ssrc\s*=\s*)("[^"]*"|'[^']*')/i;
 const unquote = (value: string) => value.slice(1, -1).replace(/&amp;/g, "&");
 
 /** The file id an `<a>` tag links to, from its href or its data-api-endpoint, or null. */
@@ -38,7 +42,41 @@ export function fileIdsIn(html: string): number[] {
   return ids;
 }
 
-/** Ids from an API `attachments` array, then the ids linked in the HTML, each once. */
+/**
+ * The Canvas file id an `<img>` shows, or null. Only a Canvas-hosted picture counts: a relative address, or one on
+ * the Canvas origin (`/courses/7/files/3/preview`, `/files/3/download`). An image on any other host is never ours to fetch.
+ */
+function imageFileId(tag: string, canvasOrigin: string): number | null {
+  const src = SRC.exec(tag);
+  if (!src) return null;
+  const value = unquote(src[2] as string).trim();
+  let path: string;
+  if (value.startsWith("//")) return null;
+  if (value.startsWith("/")) path = value;
+  else {
+    try {
+      const url = new URL(value);
+      if (url.origin !== canvasOrigin) return null;
+      path = url.pathname;
+    } catch {
+      return null;
+    }
+  }
+  const id = FILE_ID.exec(path)?.[1];
+  return id ? Number(id) : null;
+}
+
+/** File ids of Canvas-hosted images embedded in `html`, in order of first appearance, each once. */
+export function imageIdsIn(html: string, canvasOrigin: string = DEFAULT_CANVAS_ORIGIN): number[] {
+  const ids: number[] = [];
+  for (const [tag] of html.matchAll(IMG)) {
+    const id = imageFileId(tag, canvasOrigin);
+    if (id !== null && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/** Ids from an API `attachments` array, then the ids linked in the HTML, then embedded Canvas images, each once. */
 export function attachmentIds(attachments: unknown, html: string): number[] {
   const ids: number[] = [];
   if (Array.isArray(attachments)) {
@@ -47,7 +85,7 @@ export function attachmentIds(attachments: unknown, html: string): number[] {
       if (typeof id === "number" && Number.isFinite(id) && !ids.includes(id)) ids.push(id);
     }
   }
-  for (const id of fileIdsIn(html)) if (!ids.includes(id)) ids.push(id);
+  for (const id of [...fileIdsIn(html), ...imageIdsIn(html)]) if (!ids.includes(id)) ids.push(id);
   return ids;
 }
 
@@ -67,8 +105,17 @@ const escapeAttr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "
  * file id to the link. The original Canvas address is kept in `data-canvas-href`.
  * A link to a file that was not saved is left as it was.
  */
-export function rewriteFileLinks(html: string, links: ReadonlyMap<number, string>): string {
+export function rewriteFileLinks(html: string, links: ReadonlyMap<number, string>, canvasOrigin: string = DEFAULT_CANVAS_ORIGIN): string {
   if (links.size === 0) return html;
+  html = html.replace(IMG, (tag) => {
+    const id = imageFileId(tag, canvasOrigin);
+    const link = id === null ? undefined : links.get(id);
+    const src = SRC.exec(tag);
+    if (link === undefined || !src) return tag;
+    const original = unquote(src[2] as string);
+    const swapped = tag.replace(SRC, `$1"${escapeAttr(link)}"`);
+    return swapped.replace(/^<img\b/i, `<img data-canvas-src="${escapeAttr(original)}"`);
+  });
   return html.replace(ANCHOR, (tag) => {
     const id = anchorFileId(tag);
     const link = id === null ? undefined : links.get(id);

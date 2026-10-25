@@ -106,6 +106,8 @@ export async function fetchGradescopeFiles(
   now: Date = new Date(),
   signal?: AbortSignal,
   budgetMs: number = LISTING_BUDGET_MS,
+  /** Read only the courses this accepts (the course browser wants one class, not all of them). */
+  include: (course: GradescopeCourse) => boolean = () => true,
 ): Promise<GradescopeListing> {
   const listing: GradescopeListing = { courses: [], errors: [] };
   const budget = new AbortController();
@@ -127,7 +129,7 @@ export async function fetchGradescopeFiles(
       const courses = parseCourses(html);
       if (courses.length === 0 && !/courseList/.test(html)) throw new GradescopeSessionExpiredError();
       await listGradescopeFiles(
-        currentCourses(courses, now),
+        currentCourses(courses, now).filter(include),
         async (path) => (await getHtml(path, budget.signal)).html,
         budget.signal,
         listing,

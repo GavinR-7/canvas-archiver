@@ -79,11 +79,17 @@ export function subsetPlan(plan: CoursePlan, selected: ReadonlySet<string>): Cou
   return { ...plan, items: plan.items.filter((item) => selected.has(item.source)) };
 }
 
+/** Saved at the planned path. A Gradescope handout has no size or time to compare, so a record at its path counts (the run still asks the host before skipping it). */
+const isSaved = (item: PlannedItem, manifest: CourseManifest) => {
+  const verdict = decide(item, manifest.entries[item.source]);
+  return verdict === "unchanged" || verdict === "revalidate";
+};
+
 /** Sources the manifest says are already saved and unchanged, so the list can say so. */
 export function savedSources(plan: CoursePlan, manifest: CourseManifest): Set<string> {
   return new Set(
     plan.items
-      .filter((item) => manifest.entries[item.source]?.method !== "downloads" && decide(item, manifest.entries[item.source]) === "unchanged")
+      .filter((item) => manifest.entries[item.source]?.method !== "downloads" && isSaved(item, manifest))
       .map((i) => i.source),
   );
 }
@@ -92,7 +98,7 @@ export function savedSources(plan: CoursePlan, manifest: CourseManifest): Set<st
 export function downloadsSources(plan: CoursePlan, manifest: CourseManifest): Set<string> {
   return new Set(
     plan.items
-      .filter((item) => manifest.entries[item.source]?.method === "downloads" && decide(item, manifest.entries[item.source]) === "unchanged")
+      .filter((item) => manifest.entries[item.source]?.method === "downloads" && isSaved(item, manifest))
       .map((i) => i.source),
   );
 }

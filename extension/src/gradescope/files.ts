@@ -186,6 +186,20 @@ export async function listGradescopeFiles(
   return listing;
 }
 
+/**
+ * The handouts of the Gradescope course that belongs to one Canvas course, as plan inputs.
+ * Empty when none matches (or two Canvas courses would), so a handout is never filed under a guess.
+ */
+export function handoutsFor(
+  listing: GradescopeListing,
+  course: Pick<Course, "id">,
+  canvas: Pick<Course, "id" | "name" | "courseCode">[],
+): ExternalFile[] {
+  return listing.courses
+    .filter((entry) => matchCanvasCourse(entry.course, canvas)?.id === course.id)
+    .flatMap((entry) => entry.files.map(toExternal));
+}
+
 type CourseInput = { course: Pick<Course, "id" | "name" | "courseCode">; sources: CourseSources };
 
 const toExternal = (file: GradescopeFile): ExternalFile => ({
