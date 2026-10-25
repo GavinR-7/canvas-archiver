@@ -26,7 +26,7 @@ import {
 } from "./manifest";
 import type { Layout } from "./layout";
 import { scrubUrls, type Method } from "./transfer";
-import type { CoursePlan, PlannedItem } from "./plan";
+import type { CoursePlan, ItemRole, PlannedItem } from "./plan";
 
 export interface SaveResult {
   size: number;
@@ -63,7 +63,7 @@ export interface ManifestStore {
 export const IN_DOWNLOADS = "saved to Downloads, not in the archive folder";
 
 export type ItemOutcome =
-  | { source: string; path: string[]; status: "saved"; decision: Exclude<Decision, "unchanged" | "revalidate">; inDownloads?: string }
+  | { source: string; path: string[]; status: "saved"; decision: Exclude<Decision, "unchanged" | "revalidate">; inDownloads?: string; role?: ItemRole }
   | { source: string; path: string[]; status: "unchanged"; inDownloads?: string }
   | { source: string; path: string[]; status: "failed"; message: string; inDownloads?: undefined };
 
@@ -195,6 +195,7 @@ export async function runArchive(
         path: item.path,
         status: "saved",
         decision: decision === "revalidate" ? "changed" : decision,
+        ...(item.role ? { role: item.role } : {}),
         ...(result.method === "downloads" ? { inDownloads: result.savedTo ?? item.path.join("/") } : {}),
       };
     } catch (error) {
