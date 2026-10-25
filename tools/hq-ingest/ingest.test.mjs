@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { destination, ingest, upsertIndex } from "./ingest.mjs";
@@ -130,4 +130,42 @@ test("upsertIndex keeps Topics on top and replaces blocks in place", () => {
   const replaced = upsertIndex(out, "files/a", "## files/a\n- fresh");
   assert.match(replaced, /- fresh/);
   assert.doesNotMatch(replaced, /- old/);
+});
+
+// Symlink confinement (Anvil T-474 P2, ported from gavin-data PR #186 at 475cfd8): a link inside the staging or
+// course tree must never let a valid manifest write or delete outside the courses root.
+function outsideSentinel(content = "outside") {
+  const dir = mkdtempSync(path.join(tmpdir(), "ingest-outside-"));
+  writeFileSync(path.join(dir, "a.txt"), content);
+  return dir;
+}
+
+test("a symlinked course subfolder cannot redirect a write outside the root", () => {
+  const { root, inbox } = setup();
+  const outside = outsideSentinel("keep me");
+  symlinkSync(outside, path.join(root, "ece3030", "files"));
+  drop(inbox, "ece3030/files/a.txt", "attacker");
+  batch(inbox, "b.json", [["ece3030/files/a.txt", "canvas:file/1", "attacker"]]);
+  const r = ingest({ inbox, root, today: "2026-10-15" });
+  assert.equal(readFileSync(path.join(outside, "a.txt"), "utf8"), "keep me");
+  assert.equal(r.courses.ece3030?.new ?? 0, 0);
+  assert.ok(existsSync(path.join(inbox, "_batches", "b.json")), "batch is kept when an entry fails");
+});
+
+test("a symlinked staging directory cannot be read from or deleted through", () => {
+  const { root, inbox } = setup();
+  const outside = outsideSentinel("external");
+  mkdirSync(path.join(outside, "ece3030", "files"), { recursive: true });
+  writeFileSync(path.join(outside, "ece3030", "files", "a.txt"), "external");
+  mkdirSync(path.join(inbox, "_staged"), { recursive: true });
+  symlinkSync(outside, path.join(inbox, "_staged", "b"));
+  writeFileSync(path.join(inbox, "_batches", "b.json"), JSON.stringify({
+    createdAt: "2026-10-15T00:00:00Z", courses: { ece3030: 1 },
+    files: [{ course: "ece3030", path: "ece3030/files/a.txt", stage: "_staged/b/ece3030/files/a.txt", source: "canvas:file/1", canvasModifiedAt: null, size: 8, sha256: sha("external") }],
+  }));
+  ingest({ inbox, root, today: "2026-10-15" });
+  assert.equal(readFileSync(path.join(outside, "ece3030", "files", "a.txt"), "utf8"), "external");
+  assert.ok(existsSync(path.join(outside, "ece3030", "files", "a.txt")));
+  assert.ok(!existsSync(path.join(root, "ece3030", "files", "a.txt")), "nothing copied into the course");
+  assert.ok(existsSync(path.join(inbox, "_batches", "b.json")));
 });
