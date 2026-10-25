@@ -169,3 +169,11 @@ Gap: Gavin's CS3700 and HIST archive failed 72 of 152 saves with "blocked: the f
 - Ed: a sign-in problem still stops at once with one notice; any other failure skips only that course and the sync shows a single "Ed Discussion data is missing for X, Y" notice instead of losing every course.
 - Limit: bytes are read in the background worker, so a syllabus PDF behind a file host that refuses direct reads (the T-510 cases) is not parsed there; the manual per-course exam-dates field (T-519) covers those.
 - Cost: pdf.js is inlined in `background.js` (1.66 MB, a service worker cannot lazy-load a chunk); unpacked build 2.1 MB.
+
+## T-519: manual exam dates per course (PR `products/v2-12-manual-exams`, base v2-11-syllabus-exams)
+
+Research T-513 found no source the extension may read for some exams: the registrar schedule is behind NetID, Piazza forbids scraping, CMSX has no API. So Settings has an "Exam dates" list per current-term course: date (YYYY-MM-DD), optional time (Eastern, 24 hour), label, several entries.
+- Stored in `chrome.storage.local` (`settings.manual-exams.v1`); `src/dates/manual-exams.ts` validates (a date that does not exist is rejected, entries kept in date order, repeats ignored).
+- Becomes exam tasks with source `manual`, badge "Entered by you", never unconfirmed. The background sync adds them to `snapshot.exams`; the Upcoming page also merges them live, so an edit shows at once.
+- An entered exam wins over a parsed twin on the same day (priority above Canvas). Exported in due.json as `source: "manual"`.
+- No new permissions, no network. Not done: importing from the registrar tab (a question for Gavin in the Monday brief).

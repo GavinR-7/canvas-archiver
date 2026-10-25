@@ -11,7 +11,7 @@ import { TIME_ZONE } from "./extract";
 import type { Task } from "@/src/types/canvas";
 import { byDueDate } from "@/src/lib/task-status";
 
-const PRIORITY: Record<Task["source"], number> = { canvas: 0, gradescope: 1, ed: 2, syllabus: 3 };
+const PRIORITY: Record<Task["source"], number> = { manual: -1, canvas: 0, gradescope: 1, ed: 2, syllabus: 3 };
 const STOP = new Set(["the", "a", "an", "of", "and", "for", "in", "on", "at", "to", "exam", "due", "pm", "am"]);
 
 export const courseKey = (code: string) => code.toLowerCase().replace(/[^a-z0-9]/g, "");
