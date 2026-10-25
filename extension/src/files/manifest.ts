@@ -6,6 +6,7 @@
 
 import { Sha256 } from "./sha256";
 import type { PlannedItem } from "./plan";
+import type { Method } from "./transfer";
 
 export interface ManifestEntry {
   path: string[];
@@ -21,6 +22,8 @@ export interface ManifestEntry {
    * If-Modified-Since so an unchanged file costs a 304. Absent: re-fetch and compare the hash.
    */
   validator?: string | null;
+  /** How the bytes were fetched; "downloads" = saved by the browser under Downloads/<path>, not in the folder. Absent in older manifests. */
+  method?: Method;
 }
 
 export interface CourseManifest {

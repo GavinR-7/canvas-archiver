@@ -162,7 +162,7 @@ export default function App() {
       abort.current = new AbortController();
       setProgress(null);
       try {
-        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle);
+        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle, { downloadsFallback: layout.id === "archive" });
         await rememberDirBindings(layout.id, plans); // each course keeps this folder from now on
         const store = layout.id === "ingest" ? storageManifestStore() : folderManifestStore(sink);
         const outcome = await runArchive(plans, layout, sink, store, {
@@ -284,7 +284,7 @@ export default function App() {
         <section className="mt-6" aria-live="polite">
           <h2 className="font-medium">Done</h2>
           <p className="mt-1 text-sm">
-            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}. Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
+            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads > 0 && ` ${result.viaDownloads} of the saved files came through the browser's Downloads folder (Downloads/Cornell/…) because their file host refused a direct read; move them into your folder if you want them together.`} Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
           </p>
           {looksBlockedByCors(result) && !layout.needsFolder && (
             <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">

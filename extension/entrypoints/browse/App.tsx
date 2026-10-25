@@ -178,7 +178,7 @@ export default function App() {
       setProgress(null);
       abort.current = new AbortController();
       try {
-        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle);
+        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle, { downloadsFallback: true });
         await rememberDirBindings(archiveLayout.id, [chosenPlan]);
         const outcome = await runArchive([chosenPlan], archiveLayout, sink, folderManifestStore(sink), {
           signal: abort.current.signal,
@@ -276,7 +276,7 @@ export default function App() {
         <section className="mt-6" aria-live="polite">
           <h2 className="font-medium">Done</h2>
           <p className="mt-1 text-sm">
-            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.
+            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads > 0 && ` ${result.viaDownloads} came through the browser's Downloads folder (Downloads/Cornell/…) because their file host refused a direct read.`}
           </p>
           {looksBlockedByCors(result) && (
             <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">

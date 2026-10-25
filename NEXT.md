@@ -146,3 +146,13 @@ Gap: the archive saved assignment, syllabus and announcement pages as HTML stubs
 - Attachments are plan items, so the course browser (#20) lists them next to their page, tickable.
 - Request cost: one extra paged list per course (`discussion_topics`) plus one GET per distinct linked file not already in the Files list. Embedded images (`<img>`) are not downloaded. Same host, GET only, no new permission.
 - The nightly feed uses the same planner, so it now carries attachments too (ingest layout: same `files/` or `_syllabus/` folder as the page).
+
+## T-510: blocked file saves (PR `products/v2-10-blocked-files`, base v2-9-attachments)
+
+Gap: Gavin's CS3700 and HIST archive failed 72 of 152 saves with "blocked: the file host did not allow the browser to read this file", plus one 502. A folder download reads the file in the page, so a file host that redirects to a CDN without CORS headers (or refuses the unsigned request) throws a bare TypeError.
+- New `src/files/transfer.ts`: each Canvas file is tried in order: direct read without credentials; the same URL with the Canvas session, only if the address is on the Canvas origin; then the browser's own downloader (`chrome.downloads`), which is not subject to CORS. 429/502/503/504 are retried up to 4 times with jittered backoff before moving to the next route.
+- The method used (`fetch`, `fetch-session`, `downloads`) is recorded per file in the manifest. Nothing is skipped silently: a file no route can fetch fails with a message that starts "blocked:" or names the Canvas status, never the signed URL.
+- Limit, stated plainly: the browser cannot write into a folder chosen with the folder picker. Files that needed the fallback land in `Downloads/Cornell/<course>/...` (same relative path), are counted in the result message, and are not re-checked against the chosen folder (the manifest says `downloads`). Move them over if you want them together.
+- The nightly feed / ingest layout has no fallback on purpose: its files must land in the inbox, so a blocked file there still fails visibly.
+- Cause is inferred from the error text and the earlier T-461 notes; it was not reproduced against Gavin's live account.
+- Re-run for acceptance: reload the unpacked build, open the Files page, select CS3700 only, pick the same Cornell folder, run the archive again. Already-saved files are skipped; the 39 are expected to finish with 0 failed.

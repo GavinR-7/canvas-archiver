@@ -25,6 +25,7 @@ import {
   type SavedRecord,
 } from "./manifest";
 import type { Layout } from "./layout";
+import type { Method } from "./transfer";
 import type { CoursePlan, PlannedItem } from "./plan";
 
 export interface SaveResult {
@@ -35,6 +36,8 @@ export interface SaveResult {
   validator?: string | null;
   /** The host answered 304 to a conditional request: nothing was written, the saved file stands. */
   notModified?: boolean;
+  /** How the bytes were obtained; "downloads" means the browser saved them under Downloads, not in the folder. */
+  method?: Method;
 }
 
 export interface FileSink {
@@ -63,6 +66,8 @@ export interface RunResult {
   saved: number;
   unchanged: number;
   failed: number;
+  /** Of `saved`, how many the browser's downloader wrote under Downloads because the file host refused a direct read. */
+  viaDownloads: number;
   outcomes: ItemOutcome[];
   cancelled: boolean;
   /** Name of the batch file written (ingest layout), or null. */
@@ -116,6 +121,7 @@ export async function runArchive(
   const saved: SavedRecord[] = [];
   let next = 0;
   let sinceCheckpoint = 0;
+  let viaDownloads = 0;
   let checkpointing: Promise<void> | null = null;
 
   const persist = async () => {
@@ -134,7 +140,8 @@ export async function runArchive(
   const one = async ({ plan, item }: (typeof queue)[number]): Promise<ItemOutcome> => {
     const manifest = manifests.get(plan.courseId) as CourseManifest;
     try {
-      const onDisk = layout.verifyDisk && sink.keepsRecords ? await sink.size(item.path) : undefined;
+      // A file the browser downloaded lives under Downloads, not in this folder: there is nothing here to verify.
+      const onDisk = layout.verifyDisk && sink.keepsRecords && manifest.entries[item.source]?.method !== "downloads" ? await sink.size(item.path) : undefined;
       const decision = keep ? decide(item, manifest.entries[item.source], onDisk) : "new";
       if (decision === "unchanged") return { source: item.source, path: item.path, status: "unchanged" };
 
@@ -158,8 +165,10 @@ export async function runArchive(
         sha256: result.sha256,
         modifiedAt: item.modifiedAt,
         savedAt: now().toISOString(),
+        ...(result.method ? { method: result.method } : {}),
         ...(result.validator !== undefined ? { validator: result.validator } : {}),
       };
+      if (result.method === "downloads") viaDownloads++;
       saved.push({
         course: plan.folder,
         source: item.source,
@@ -209,6 +218,7 @@ export async function runArchive(
     saved: count("saved"),
     unchanged: count("unchanged"),
     failed: count("failed"),
+    viaDownloads,
     outcomes,
     cancelled: signal?.aborted ?? false,
     batch,
