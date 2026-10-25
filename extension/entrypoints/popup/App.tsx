@@ -45,16 +45,17 @@ function openFiles() {
 }
 
 export default function App() {
-  const { snapshot, loading, refreshing, refresh } = useSnapshot();
-  const now = useNow();
-  const { user, tasks, error, gradescopeError } = snapshot;
-  const filter = useCourseFilter("popup", snapshot.courses);
-  const courses = filter.courses;
-  // null until known, so the prompt does not flash on a Canvas tab. The popup works from anywhere; this only says where syncing starts.
+  // null until known, so the prompt does not flash on a Canvas tab.
   const [onCanvas, setOnCanvas] = useState<boolean | null>(null);
   useEffect(() => {
     void canvasTabIsActive().then(setOnCanvas);
   }, []);
+  // Off Canvas the popup only shows what is stored: no snapshot request, so nothing reaches the network until the person opens Canvas.
+  const { snapshot, loading, refreshing, refresh } = useSnapshot(onCanvas === null ? "wait" : onCanvas ? "network" : "cache");
+  const now = useNow();
+  const { user, tasks, error, gradescopeError } = snapshot;
+  const filter = useCourseFilter("popup", snapshot.courses);
+  const courses = filter.courses;
 
   const needsAttention = tasks.filter((task) => {
     const status = taskStatus(task, now);
@@ -80,7 +81,7 @@ export default function App() {
         <button
           type="button"
           onClick={refresh}
-          disabled={refreshing}
+          disabled={refreshing || onCanvas !== true}
           className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
           {refreshing ? "Refreshing…" : "Refresh"}

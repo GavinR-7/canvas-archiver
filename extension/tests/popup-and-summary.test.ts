@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EMPTY_SNAPSHOT, type Snapshot } from "@/src/lib/messages";
+import { readSnapshot } from "@/src/ui/useSnapshot";
 import { canvasTabIsActive, isCanvasUrl } from "@/src/lib/canvas-tab";
 import { describeRun, whatChanged } from "@/src/files/summary";
 import { planCourse, type CanvasDocument } from "@/src/files/plan";
@@ -50,5 +52,35 @@ describe("Done line (T-535)", () => {
     });
     const roles = Object.fromEntries(plan.items.map((i) => [i.source, i.role]));
     expect(roles).toMatchObject({ "canvas:file/1": "file", "canvas:file/2": "attachment", "canvas:file/3": "image", "gradescope:file/1/a": "handout", "canvas:page/p": "page" });
+  });
+});
+
+describe("popup off Canvas is cache-only (T-548)", () => {
+  const stale = { ...EMPTY_SNAPSHOT, fetchedAt: "2020-01-01T00:00:00Z", error: { kind: "other" as const, message: "old" } };
+  const io = (cached: Snapshot) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const ask = vi.fn(async () => {
+      await fetch("https://canvas.cornell.edu/api/v1/users/self");
+      return EMPTY_SNAPSHOT;
+    });
+    return { fetchSpy, ask, cached: vi.fn(async () => cached) };
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([["empty", EMPTY_SNAPSHOT], ["stale and errored", stale]])("a %s cache with a non-Canvas tab makes zero requests, on mount and on refresh", async (_n, cache) => {
+    const h = io(cache);
+    expect(await readSnapshot("cache", false, h)).toBe(cache);
+    expect(await readSnapshot("cache", true, h)).toBeNull();
+    expect(await readSnapshot("wait", false, h)).toBeNull();
+    expect(h.ask).not.toHaveBeenCalled();
+    expect(h.fetchSpy).not.toHaveBeenCalled();
+  });
+  it("on Canvas, and on other views, the worker is still asked (and may refresh)", async () => {
+    const h = io(EMPTY_SNAPSHOT);
+    await readSnapshot("network", false, h);
+    await readSnapshot("network", true, h);
+    expect(h.ask.mock.calls.map((c) => (c as unknown as string[])[0])).toEqual(["GET_SNAPSHOT", "REFRESH"]);
+    expect(h.fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
