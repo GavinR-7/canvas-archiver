@@ -37,6 +37,7 @@ import { fetchSyllabusTasks } from "@/src/dates/syllabus";
 import { mergeTasks } from "@/src/dates/merge";
 import { loadSettings } from "@/src/sync/settings";
 import { syncDue } from "@/src/sync/run";
+import { loadClasses } from "@/src/schedule/model";
 import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
@@ -179,7 +180,7 @@ async function startFeed() {
 
 async function refreshAndSync(): Promise<Snapshot> {
   const snapshot = await refreshOnce();
-  await syncDue(snapshot, await loadSettings()).catch((error: unknown) => {
+  await syncDue(snapshot, await loadSettings(), new Date(), fetch, await loadClasses()).catch((error: unknown) => {
     console.warn("[canvas-archiver] due.json sync failed", error);
   });
   return snapshot;
