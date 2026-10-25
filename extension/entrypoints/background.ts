@@ -34,6 +34,7 @@ import {
 import { fetchGradescopeTasks } from "@/src/gradescope/api";
 import { fetchEdTasks } from "@/src/ed/api";
 import { fetchSyllabusTasks } from "@/src/dates/syllabus";
+import { EXAM_DAYS, inWindow, isExamTask } from "@/src/dates/exams";
 import { mergeTasks } from "@/src/dates/merge";
 import { loadSettings } from "@/src/sync/settings";
 import { syncDue } from "@/src/sync/run";
@@ -78,12 +79,14 @@ async function refresh(): Promise<Snapshot> {
 
   // Gradescope runs alongside Canvas and fails independently. Its tasks from
   // the previous fetch are kept on failure so a flaky page doesn't blank them.
-  const gradescope = fetchGradescopeTasks(UPCOMING_DAYS).then(
+  // Everything is fetched out to EXAM_DAYS once: `tasks` keeps the 14-day window, `exams` keeps the exams.
+  const previousAll = [...new Map([...previous.tasks, ...(previous.exams ?? [])].map((task) => [task.id, task])).values()];
+  const gradescope = fetchGradescopeTasks(EXAM_DAYS).then(
     (tasks) => ({ tasks, error: null as SnapshotError | null }),
     (error: unknown) => {
       console.warn("[canvas-archiver] gradescope refresh failed", error);
       return {
-        tasks: previous.tasks.filter((task) => task.source === "gradescope"),
+        tasks: previousAll.filter((task) => task.source === "gradescope"),
         error: describeError(error, "Gradescope"),
       };
     },
@@ -93,27 +96,30 @@ async function refresh(): Promise<Snapshot> {
     // Courses first: tasks are labelled with their course name, so the lookup
     // has to exist before planner items are normalised.
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
-    const tasks = await fetchUpcomingTasks(courses);
+    const tasks = await fetchUpcomingTasks(courses, EXAM_DAYS);
 
     // Dates written in prose (syllabus, Ed announcements) are best-effort: each
     // fails alone, and its previous result is kept rather than blanking.
     const current = courses.filter((c) => !c.restricted);
-    const syllabus = await fetchSyllabusTasks(current, UPCOMING_DAYS).catch((error: unknown) => {
+    const syllabus = await fetchSyllabusTasks(current, EXAM_DAYS).catch((error: unknown) => {
       console.warn("[canvas-archiver] syllabus dates failed", error);
-      return previous.tasks.filter((task) => task.source === "syllabus");
+      return previousAll.filter((task) => task.source === "syllabus");
     });
     let edError: SnapshotError | null = null;
-    const ed = await fetchEdTasks(current, UPCOMING_DAYS).catch((error: unknown) => {
+    const ed = await fetchEdTasks(current, EXAM_DAYS).catch((error: unknown) => {
       console.warn("[canvas-archiver] ed refresh failed", error);
       edError = describeError(error, "Ed Discussion");
-      return previous.tasks.filter((task) => task.source === "ed");
+      return previousAll.filter((task) => task.source === "ed");
     });
 
     const gs = await gradescope;
+    const all = [...tasks, ...gs.tasks, ...syllabus, ...ed];
+    const now = new Date();
     const snapshot: Snapshot = {
       user,
       courses,
-      tasks: mergeTasks([...tasks, ...gs.tasks, ...syllabus, ...ed]),
+      tasks: mergeTasks(all.filter((task) => inWindow(task, now, UPCOMING_DAYS))),
+      exams: mergeTasks(all.filter(isExamTask)),
       fetchedAt: new Date().toISOString(),
       error: null,
       gradescopeError: gs.error,
@@ -129,7 +135,8 @@ async function refresh(): Promise<Snapshot> {
     const failed: Snapshot = {
       ...previous,
       // Canvas data is stale, but a fresh Gradescope result is still good.
-      tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...gs.tasks]),
+      tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...gs.tasks.filter((task) => inWindow(task, new Date(), UPCOMING_DAYS))]),
+      exams: mergeTasks([...(previous.exams ?? []).filter((task) => task.source !== "gradescope"), ...gs.tasks.filter(isExamTask)]),
       error: describeError(error),
       gradescopeError: gs.error,
     };

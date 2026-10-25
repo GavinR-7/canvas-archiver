@@ -42,6 +42,8 @@ export interface Snapshot {
   user: CanvasUser | null;
   courses: Course[];
   tasks: Task[];
+  /** Every known exam date, however far ahead (not limited to the Upcoming window). Absent in older snapshots. */
+  exams?: Task[];
   /** When this data was fetched from Canvas. ISO 8601 UTC. */
   fetchedAt: string | null;
   /** Non-null when the last Canvas fetch failed. Stale data may still be present. */
