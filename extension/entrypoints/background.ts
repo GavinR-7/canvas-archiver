@@ -185,13 +185,21 @@ async function startFeed() {
   await chrome.tabs.create({ url: chrome.runtime.getURL("files.html?auto=feed"), active: false });
 }
 
-async function refreshAndSync(): Promise<Snapshot> {
+async function refreshAndSyncOnce(): Promise<Snapshot> {
   if (!(await hasConsent())) return EMPTY_SNAPSHOT;
   const snapshot = await refreshOnce();
   await syncDue(snapshot, await loadSettings(), new Date(), fetch, await loadClasses()).catch((error: unknown) => {
     console.warn("[canvas-archiver] due.json sync failed", error);
   });
   return snapshot;
+}
+
+// Share the entire refresh + both uploads, including manual requests during an
+// alarm's PUT. Sharing only refreshOnce lets older and newer uploads race.
+let syncInFlight: Promise<Snapshot> | null = null;
+function refreshAndSync(): Promise<Snapshot> {
+  syncInFlight ??= refreshAndSyncOnce().finally(() => { syncInFlight = null; });
+  return syncInFlight;
 }
 
 const REFRESH_ALARM = "refresh-and-sync";
