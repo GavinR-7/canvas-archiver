@@ -27,10 +27,11 @@ export class EdSessionExpiredError extends SessionExpiredError {
   }
 }
 
-async function getJson(path: string): Promise<Raw> {
+/** `global` is true for the user endpoint: only there does a 401/403 mean the sign-in is gone. On a course it means that course is closed to us. */
+async function getJson(path: string, global = false): Promise<Raw> {
   const url = assertCanvasOrigin(`${ED_API_ORIGIN}${path}`, ED_API_ORIGIN);
   const response = await fetch(url, { method: "GET", credentials: "include", headers: { Accept: "application/json" } });
-  if (response.status === 401 || response.status === 403) throw new EdSessionExpiredError();
+  if (global && (response.status === 401 || response.status === 403)) throw new EdSessionExpiredError();
   if (!response.ok) throw new CanvasError(`Ed returned ${response.status} for ${path}.`);
   return (await response.json()) as Raw;
 }
@@ -105,17 +106,34 @@ export function matchCourse(ed: EdCourse, courses: Course[]): Course | null {
   return courses.find((c) => c.courseCode && haystack.includes(courseKey(c.courseCode))) ?? null;
 }
 
-export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date()): Promise<Task[]> {
-  const edCourses = normalizeEdCourses(await getJson("/api/user"));
+export interface EdResult {
+  tasks: Task[];
+  /** Course codes whose Ed threads could not be read (not a sign-in problem). Reported once per sync. */
+  missed: string[];
+}
+
+/**
+ * Exam and quiz dates from Ed announcements. A sign-in problem stops everything
+ * and throws once; any other failure skips only that course, so one broken
+ * course neither blanks the rest nor produces a message of its own.
+ */
+export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date()): Promise<EdResult> {
+  const edCourses = normalizeEdCourses(await getJson("/api/user", true));
   const tasks: Task[] = [];
+  const missed: string[] = [];
   for (const ed of edCourses) {
     const course = matchCourse(ed, courses);
     if (!course) continue;
-    const threads = normalizeEdThreads(await getJson(`/api/courses/${ed.id}/threads?limit=50&sort=new`));
-    for (const thread of threads.filter(worthReading)) {
-      const url = `https://edstem.org/us/courses/${ed.id}/discussion/${thread.number ?? thread.id}`;
-      tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays));
+    try {
+      const threads = normalizeEdThreads(await getJson(`/api/courses/${ed.id}/threads?limit=50&sort=new`));
+      for (const thread of threads.filter(worthReading)) {
+        const url = `https://edstem.org/us/courses/${ed.id}/discussion/${thread.number ?? thread.id}`;
+        tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays));
+      }
+    } catch (error) {
+      if (error instanceof SessionExpiredError) throw error;
+      missed.push(course.courseCode || course.name);
     }
   }
-  return tasks;
+  return { tasks, missed };
 }
