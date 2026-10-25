@@ -21,6 +21,10 @@ The v2 deliverables (download folder, all files, AI downloader, chat, schedule m
 
 **D2 + D2b (branch `products/v2-full-archive`, built):** the Files page now archives modules, course files, pages, assignments, announcements and the syllabus per course. Incremental: a manifest per course keyed by stable source id (`canvas:file/<id>`), compared by Canvas modified time (inline items by content hash), plus an on-disk size check in the archive layout. Two layouts over one planner: `archive` (`Cornell/<course>/<NN module>/`, manifest in `.canvas-archive.json`) and `ingest` (HQ contract: `<slug>/<NN-module>/`, `files/`, `_syllabus/`, `_batches/<ISO>.json` written last, state kept in `chrome.storage.local` because ingest drains the inbox). Streaming SHA-256 of the bytes written. **Not in this PR:** Gradescope content (parser still unverified on a real account); per-course timing is displayed after a run but not yet measured. **Next:** T-25 dates from every source + `due.json` sync.
 
+## T-390 status (branch `products/store-readiness`)
+
+Web Store readiness, on top of the v2 stack: icons, four real-UI screenshots (`docs/store/`), first-run consent gate (every page plus the service worker), `docs/PRIVACY.md`, permission justifications and the Cornell-only host decision in `docs/STORE_LISTING.md`. **Not done (Gavin's):** policy hosting URL, contact email, developer account, submit. **Unverified:** a real-account run of the zip; Chrome's own review.
+
 ## Slice 1 — Gradescope due dates (in review)
 
 - Reads `/account` (course list, term headings) and `/courses/:id` (assignment table) with the signed-in session. Regex parser because the MV3 service worker has no `DOMParser`.

@@ -7,6 +7,7 @@
  * GitHub, only in the Authorization header.
  */
 
+import { revokeConsent } from "@/src/consent/consent";
 import { useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, validate, type SyncSettings } from "@/src/sync/github";
 import { DEFAULT_AI, loadAi, saveAi, type AiSettings } from "@/src/ai/model";
@@ -110,6 +111,15 @@ export default function App() {
   return (
     <div className="mx-auto max-w-xl p-6 text-zinc-900 dark:text-zinc-100">
       <h1 className="text-xl font-semibold">Settings</h1>
+
+      <section className="mt-6">
+        <h2 className="font-medium">Privacy</h2>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          You accepted the disclosure on first run. Withdrawing stops all reading from Canvas, Gradescope and Ed until you accept again.
+          Data already stored stays on this computer until you remove the extension.
+        </p>
+        <button type="button" className="mt-2 text-sm underline" onClick={() => void revokeConsent()}>Withdraw consent</button>
+      </section>
 
       <section className="mt-6">
         <h2 className="font-medium">Send deadlines to HQ</h2>
