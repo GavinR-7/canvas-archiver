@@ -19,6 +19,7 @@ import { archiveLayout, type Layout } from "./layout";
 import { courseFolderName, ROOT_FOLDER, sanitizeFilename, sanitizeSegment, uniqueNames } from "./paths";
 
 export { courseFolderName, ROOT_FOLDER };
+import { relativeLink } from "./attachments";
 import { renderDocument } from "./render";
 
 export interface CanvasFile {
@@ -48,9 +49,9 @@ export interface CanvasModule {
   fileIds: number[];
 }
 
-/** A page, assignment, announcement or syllabus: text we render to HTML. */
+/** A page, assignment, announcement, discussion or syllabus: text we render to HTML. */
 export interface CanvasDocument {
-  kind: "page" | "assignment" | "announcement" | "syllabus";
+  kind: "page" | "assignment" | "announcement" | "discussion" | "syllabus";
   /** Stable key within its kind: page url slug, numeric id, or the course id. */
   key: string;
   title: string;
@@ -58,6 +59,8 @@ export interface CanvasDocument {
   modifiedAt: string | null;
   /** Where it lives in Canvas, for the header of the saved file. */
   htmlUrl: string | null;
+  /** Canvas file ids it attaches or links, in order. Saved beside it; absent means none. */
+  attachmentIds?: number[];
 }
 
 /** A file from a system other than Canvas (Gradescope handouts), fetched with that system's session. */
@@ -76,6 +79,8 @@ export interface CourseSources {
   documents: CanvasDocument[];
   /** Optional so Canvas-only callers are unchanged. */
   external?: ExternalFile[];
+  /** File ids a module or page names that Canvas would not hand over (no access, deleted). */
+  unresolvedFileIds?: number[];
 }
 
 export interface PlannedItem {
@@ -94,7 +99,7 @@ export interface PlannedItem {
   session?: "gradescope";
 }
 
-export type SkipReason = "locked" | "no-url";
+export type SkipReason = "locked" | "no-url" | "unavailable";
 
 export interface SkippedFile {
   source: string;
@@ -144,16 +149,19 @@ export function planCourse(
   const folderById = new Map(folders.map((entry) => [entry.id, entry.fullName]));
   const placed = new Set<number>();
   const skipped: SkippedFile[] = [];
-  const entries: { dir: string[]; name: string; build: (name: string) => PlannedItem }[] = [];
+  const savedPath = new Map<number, string[]>();
+  const entries: { dir: string[]; name: string; fileId?: number; doc?: CanvasDocument; build: (name: string) => PlannedItem }[] = [];
 
-  const placeFile = (target: string[], file: CanvasFile) => {
+  const placeFile = (target: string[], file: CanvasFile, original = false) => {
     placed.add(file.id);
     const source = fileSource(file.id);
     if (file.locked) return void skipped.push({ source, name: file.displayName, reason: "locked" });
     if (!file.url) return void skipped.push({ source, name: file.displayName, reason: "no-url" });
     entries.push({
       dir: target,
-      name: sanitizeFilename(file.filename || file.displayName, `file-${file.id}`),
+      fileId: file.id,
+      // Canvas's `filename` swaps spaces for "+"; an attachment keeps the name the instructor gave it.
+      name: sanitizeFilename((original ? file.displayName : file.filename) || file.displayName, `file-${file.id}`),
       build: (name) => ({
         source,
         courseId: course.id,
@@ -173,6 +181,19 @@ export function planCourse(
       const file = byId.get(fileId);
       if (file && !placed.has(file.id)) placeFile(target, file);
     }
+  }
+
+  // A file a page, assignment or announcement attaches goes beside that page (the first to name it),
+  // unless a module already holds it.
+  const docDir = (doc: CanvasDocument) => (doc.kind === "syllabus" ? layout.syllabusDir(dir) : layout.documentDir(dir, doc.kind));
+  for (const doc of documents) {
+    for (const id of doc.attachmentIds ?? []) {
+      const file = byId.get(id);
+      if (file && !placed.has(file.id)) placeFile(docDir(doc), file, true);
+    }
+  }
+  for (const id of sources.unresolvedFileIds ?? []) {
+    if (!placed.has(id)) skipped.push({ source: fileSource(id), name: `file ${id}`, reason: "unavailable" });
   }
 
   const loose = files.filter((file) => !placed.has(file.id)).sort((a, b) => a.id - b.id);
@@ -201,20 +222,29 @@ export function planCourse(
   }
 
   for (const doc of documents) {
-    const content = renderDocument(doc);
-    const target = doc.kind === "syllabus" ? layout.syllabusDir(dir) : layout.documentDir(dir, doc.kind);
+    const target = docDir(doc);
     entries.push({
       dir: target,
       name: layout.documentName(doc),
-      build: (name) => ({
-        source: documentSource(doc),
-        courseId: course.id,
-        path: [...target, name],
-        size: utf8.encode(content).length,
-        modifiedAt: doc.modifiedAt,
-        url: null,
-        content,
-      }),
+      doc,
+      // Built after the files are named, so the links in the page point at where they landed.
+      build: (name) => {
+        const links = new Map<number, string>();
+        for (const id of doc.attachmentIds ?? []) {
+          const at = savedPath.get(id);
+          if (at) links.set(id, relativeLink(target, at));
+        }
+        const content = renderDocument(doc, links);
+        return {
+          source: documentSource(doc),
+          courseId: course.id,
+          path: [...target, name],
+          size: utf8.encode(content).length,
+          modifiedAt: doc.modifiedAt,
+          url: null,
+          content,
+        };
+      },
     });
   }
 
@@ -227,11 +257,20 @@ export function planCourse(
     else groups.set(key, [entry]);
   }
 
-  const items: PlannedItem[] = [];
+  const named: { entry: (typeof entries)[number]; name: string }[] = [];
   for (const group of groups.values()) {
     const names = uniqueNames(group.map((entry) => entry.name));
-    group.forEach((entry, i) => items.push(entry.build(names[i] as string)));
+    group.forEach((entry, i) => named.push({ entry, name: names[i] as string }));
   }
+  // Files first, so each page can link to the path its attachments were given.
+  const items: PlannedItem[] = [];
+  for (const { entry, name } of named) {
+    if (entry.doc) continue;
+    const item = entry.build(name);
+    items.push(item);
+    if (entry.fileId !== undefined) savedPath.set(entry.fileId, item.path);
+  }
+  for (const { entry, name } of named) if (entry.doc) items.push(entry.build(name));
 
   items.sort((a, b) => a.path.join("/").localeCompare(b.path.join("/"), undefined, { numeric: true }));
   return { courseId: course.id, folder, dir, items, skipped };
