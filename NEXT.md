@@ -15,6 +15,10 @@ Order comes from `hq/STATE.md` → Products. Updated 2026-10-14.
 - Each slice is one PR with unit tests on the pure logic, `npm run compile && npm test && npm run build` green, and a note on what was *not* verified against a live account.
 - `Task` is the shared contract (`src/types/canvas.ts`). New sources add a `TaskSource`, not a new list.
 
+## v2 plan
+
+The v2 deliverables (download folder, all files, AI downloader, chat, schedule maker, dates from every source, HQ ingest profile) are specified in `docs/V2_SPEC.md`, each with a done-when. D1 (download folder, layout `Cornell/<course>/<module>/`) is on branch `products/v2-download-folder`. It adds the `downloads` permission (fallback only), so Chrome will ask to re-approve on update.
+
 ## Slice 1 — Gradescope due dates (in review)
 
 - Reads `/account` (course list, term headings) and `/courses/:id` (assignment table) with the signed-in session. Regex parser because the MV3 service worker has no `DOMParser`.
