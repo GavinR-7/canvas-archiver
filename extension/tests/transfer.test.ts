@@ -3,7 +3,7 @@ import { hashText, emptyManifest, type CourseManifest } from "@/src/files/manife
 import { archiveLayout } from "@/src/files/layout";
 import { planCourse, type PlannedItem } from "@/src/files/plan";
 import { runArchive, type FileSink, type ManifestStore } from "@/src/files/runner";
-import { acquireCanvasFile, MAX_ATTEMPTS, type TransferDeps } from "@/src/files/transfer";
+import { acquireCanvasFile, browserDownload, downloadsRelative, scrubUrls, MAX_ATTEMPTS, type TransferDeps } from "@/src/files/transfer";
 
 const item = (url = "https://canvas.cornell.edu/files/9/download?verifier=x"): PlannedItem => ({
   source: "canvas:file/9", courseId: 7, path: ["Cornell", "CS 3700", "Exams", "prelim.pdf"], size: 10, modifiedAt: "t1", url, content: null,
@@ -62,22 +62,22 @@ describe("acquireCanvasFile", () => {
 
   it("falls back to the browser downloader when the host refuses every direct read, and reports the method", async () => {
     const h = host([blocked]);
-    const download = vi.fn(async () => 4321);
+    const download = vi.fn(async () => ({ size: 4321, savedTo: "Cornell/CS 3700/Exams/prelim (1).pdf" }));
     const got = await acquireCanvasFile(item(), deps(h.fetchFn, download), true);
-    expect(got).toEqual({ how: "downloaded", size: 4321, method: "downloads" });
+    expect(got).toEqual({ how: "downloaded", size: 4321, savedTo: "Cornell/CS 3700/Exams/prelim (1).pdf", method: "downloads" });
     expect(download).toHaveBeenCalledWith("https://canvas.cornell.edu/files/9/download?verifier=x", "Cornell/CS 3700/Exams/prelim.pdf");
   });
 
   it("never sends the session to a host that is not Canvas, but still falls back", async () => {
     const h = host([blocked]);
-    const download = vi.fn(async () => 1);
+    const download = vi.fn(async () => ({ size: 1, savedTo: "x" }));
     const got = await acquireCanvasFile(item("https://files.example.org/x"), deps(h.fetchFn, download), true);
     expect(got.method).toBe("downloads");
     expect(h.calls.every((c) => c.credentials === "omit")).toBe(true);
   });
 
   it("does not fall back when the caller forbids it (ingest layout); the failure is named, not silent", async () => {
-    const download = vi.fn(async () => 1);
+    const download = vi.fn(async () => ({ size: 1, savedTo: "x" }));
     await expect(acquireCanvasFile(item(), deps(host([blocked]).fetchFn, download), false)).rejects.toThrow(/^blocked:/);
     expect(download).not.toHaveBeenCalled();
   });
@@ -89,6 +89,58 @@ describe("acquireCanvasFile", () => {
     const error = await acquireCanvasFile(item(), deps(host([blocked]).fetchFn, download), true).catch((e: Error) => e);
     expect((error as Error).message).toMatch(/^blocked: .*NETWORK_FAILED/);
     expect((error as Error).message).not.toContain("verifier");
+  });
+});
+
+describe("scrubbing and the real downloader", () => {
+  it("removes addresses and query strings, keeping the reason", () => {
+    const text = scrubUrls("Could not download https://x.cdn.com/f/9?verifier=SECRET&x=1 (NETWORK_FAILED) or /files/9/download?verifier=SECRET2");
+    expect(text).not.toMatch(/SECRET/);
+    expect(text).toContain("NETWORK_FAILED");
+  });
+
+  it("a downloader that rejects with the signed address never leaks it through the outcome", async () => {
+    const download = async () => {
+      throw new Error("Could not download https://canvas.cornell.edu/files/9/download?verifier=SECRET");
+    };
+    const error = (await acquireCanvasFile(item(), deps(host([blocked]).fetchFn, download), true).catch((e: Error) => e)) as Error;
+    expect(error.message).toMatch(/^blocked:/);
+    expect(error.message).not.toContain("SECRET");
+  });
+
+  it("maps a Windows Downloads path to the Downloads-relative one", () => {
+    expect(downloadsRelative("C:\\Users\\g\\Downloads\\Cornell\\CS 3700\\a (1).pdf", "p")).toBe("Cornell/CS 3700/a (1).pdf");
+    expect(downloadsRelative(undefined, "Cornell/a.pdf")).toBe("Cornell/a.pdf");
+  });
+
+  it("never overwrites, and erases the history record on success and on failure", async () => {
+    const listeners: Array<(d: unknown) => void> = [];
+    const erase = vi.fn(async () => []);
+    const download = vi.fn(async () => 5);
+    const items = [{ id: 5, state: "complete", fileSize: 77, filename: "C:\\u\\Downloads\\Cornell\\a (1).pdf" }];
+    vi.stubGlobal("chrome", {
+      runtime: {},
+      downloads: {
+        download,
+        erase,
+        search: async () => items,
+        onChanged: { addListener: (l: (d: unknown) => void) => listeners.push(l), removeListener: () => undefined },
+      },
+    });
+    try {
+      const got = await browserDownload(1000)("https://c/x?verifier=SECRET", "Cornell/a.pdf");
+      expect(got).toEqual({ size: 77, savedTo: "Cornell/a (1).pdf" });
+      expect(download).toHaveBeenCalledWith({ url: "https://c/x?verifier=SECRET", filename: "Cornell/a.pdf", conflictAction: "uniquify" });
+      expect(erase).toHaveBeenCalledWith({ id: 5 });
+
+      erase.mockClear();
+      items[0] = { id: 5, state: "interrupted", fileSize: 0, filename: "", error: "NETWORK_FAILED https://c/x?verifier=SECRET" } as never;
+      const failure = (await browserDownload(1000)("https://c/x?verifier=SECRET", "Cornell/a.pdf").catch((e: Error) => e)) as Error;
+      expect(failure.message).not.toContain("SECRET");
+      expect(erase).toHaveBeenCalledWith({ id: 5 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -112,7 +164,7 @@ describe("run with a host that refuses direct reads", () => {
       save: async (it) => {
         fetched.push(it.source);
         // every file is refused for a direct read: the browser downloads it under Downloads (not in `disk`)
-        return { size: 10, sha256: null, method: "downloads" };
+        return { size: 10, sha256: null, method: "downloads", savedTo: `Cornell/${it.path.at(-1)} (1)` };
       },
     };
     return { sink, fetched, disk };
@@ -129,9 +181,11 @@ describe("run with a host that refuses direct reads", () => {
     const first = await runArchive(plan(), archiveLayout, sink, store);
     expect(first).toMatchObject({ saved: 3, failed: 0, viaDownloads: 3 });
     expect(Object.values(data.get(7)?.entries ?? {}).map((e) => e.method)).toEqual(["downloads", "downloads", "downloads"]);
+    expect(Object.values(data.get(7)?.entries ?? {}).every((e) => e.savedTo?.startsWith("Cornell/"))).toBe(true);
+    expect(first.outcomes.every((o) => o.status === "saved" && o.inDownloads?.endsWith("(1)"))).toBe(true);
     fetched.length = 0;
     const second = await runArchive(plan(), archiveLayout, sink, store);
-    expect(second).toMatchObject({ saved: 0, unchanged: 3, viaDownloads: 0 });
+    expect(second).toMatchObject({ saved: 0, unchanged: 3, viaDownloads: 0, alreadyInDownloads: 3 });
     expect(fetched).toEqual([]);
   });
 

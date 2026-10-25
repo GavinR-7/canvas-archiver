@@ -156,3 +156,8 @@ Gap: Gavin's CS3700 and HIST archive failed 72 of 152 saves with "blocked: the f
 - The nightly feed / ingest layout has no fallback on purpose: its files must land in the inbox, so a blocked file there still fails visibly.
 - Cause is inferred from the error text and the earlier T-461 notes; it was not reproduced against Gavin's live account.
 - Re-run for acceptance: reload the unpacked build, open the Files page, select CS3700 only, pick the same Cornell folder, run the archive again. Already-saved files are skipped; the 39 are expected to finish with 0 failed.
+
+### T-522: review fixes on T-510 (Anvil T-511, two P2s)
+- The downloader uses `conflictAction: "uniquify"`, never overwrites, and returns where the file really landed (`Cornell/<course>/x (1).pdf`).
+- A file saved that way is recorded `method: "downloads"` with `savedTo` and reported as "saved to Downloads, not in the archive folder"; the next run does not re-download it (no "(1)" pile) but reports it as in Downloads, never as present in the folder. Files and Browse list these and Browse marks them "in Downloads, not the archive folder".
+- `chrome.downloads.erase` removes the history record (which holds the signed address) on success and on failure; every error text is scrubbed of addresses and query strings. Regressions use a `verifier=SECRET` rejection.

@@ -27,16 +27,30 @@ export type Method = "fetch" | "fetch-session" | "downloads";
 
 export interface TransferDeps {
   fetch: typeof fetch;
-  /** Hands the URL to the browser's downloader and resolves when it has finished; returns the size on disk. */
-  download: ((url: string, filename: string) => Promise<number>) | null;
+  /** Hands the URL to the browser's downloader and resolves when it has finished; returns the size and where it landed. */
+  download: ((url: string, filename: string) => Promise<Downloaded>) | null;
   sleep: (ms: number) => Promise<void>;
   /** Origin the session may be sent to. */
   canvasOrigin?: string;
 }
 
+export interface Downloaded {
+  size: number;
+  /** Path under the Downloads folder the file was actually written to (a name clash gets "(1)" appended, never overwritten). */
+  savedTo: string;
+}
+
 export type Acquired =
   | { how: "stream"; response: Response; method: "fetch" | "fetch-session" }
-  | { how: "downloaded"; size: number; method: "downloads" };
+  | { how: "downloaded"; size: number; savedTo: string; method: "downloads" };
+
+/** Strip anything URL-shaped from text that may reach the screen, the manifest or a log: a signed address carries its secret in the query. */
+export function scrubUrls(text: string): string {
+  return text
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, "[address removed]")
+    .replace(/[?&](verifier|token|access_token|signature|sig|key|jwt|download_frd)=[^\s&"')]*/gi, "[removed]")
+    .replace(/\?[^\s"')]*=[^\s"')]*/g, "[removed]");
+}
 
 const RETRY_STATUSES = new Set([429, 502, 503, 504]);
 export const MAX_ATTEMPTS = 4;
@@ -92,10 +106,10 @@ export async function acquireCanvasFile(item: PlannedItem, deps: TransferDeps, a
 
   if (allowDownloads && deps.download) {
     try {
-      const size = await deps.download(url, item.path.join("/"));
-      return { how: "downloaded", size, method: "downloads" };
+      const got = await deps.download(url, item.path.join("/"));
+      return { how: "downloaded", size: got.size, savedTo: got.savedTo, method: "downloads" };
     } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
+      const why = scrubUrls(error instanceof Error ? error.message : String(error));
       throw new Error(`${blocked ? "blocked" : `${label(item.session)} answered ${status}`}: the browser download also failed (${why})`);
     }
   }
@@ -106,35 +120,48 @@ export async function acquireCanvasFile(item: PlannedItem, deps: TransferDeps, a
   );
 }
 
-/** The real downloader: starts the download, waits for it to finish, returns the bytes written. */
-export function browserDownload(timeoutMs = 10 * 60_000): (url: string, filename: string) => Promise<number> {
+/** "C:\\Users\\g\\Downloads\\Cornell\\CS 3700\\a (1).pdf" -> "Cornell/CS 3700/a (1).pdf"; falls back to the planned name. */
+export function downloadsRelative(absolute: string | undefined, planned: string): string {
+  const parts = (absolute ?? "").replace(/\\/g, "/").split("/");
+  const at = parts.lastIndexOf("Downloads");
+  return at >= 0 && at < parts.length - 1 ? parts.slice(at + 1).join("/") : planned;
+}
+
+/**
+ * The real downloader: starts the download, waits for it to finish, returns the bytes
+ * written and where they landed. A clash with an existing file is renamed, never overwritten.
+ * The browser's history record (which holds the signed address) is erased on every exit.
+ */
+export function browserDownload(timeoutMs = 10 * 60_000): (url: string, filename: string) => Promise<Downloaded> {
   return (url, filename) =>
-    new Promise<number>((resolve, reject) => {
+    new Promise<Downloaded>((resolve, reject) => {
       let id: number | undefined;
       const timer = setTimeout(() => done(new Error("timed out")), timeoutMs);
       const listener = (delta: chrome.downloads.DownloadDelta) => {
         if (delta.id !== id) return;
         if (delta.state?.current === "complete") {
-          void chrome.downloads.search({ id }).then((found) => done(null, found[0]?.fileSize ?? 0));
+          void chrome.downloads.search({ id }).then((found) => done(null, { size: found[0]?.fileSize ?? 0, savedTo: downloadsRelative(found[0]?.filename, filename) }));
         } else if (delta.state?.current === "interrupted" || delta.error) {
           done(new Error(delta.error?.current ?? "interrupted"));
         }
       };
-      const done = (error: Error | null, size = 0) => {
+      const done = (error: Error | null, got?: Downloaded) => {
         clearTimeout(timer);
         chrome.downloads.onChanged.removeListener(listener);
-        if (error) reject(error);
-        else resolve(size);
+        // Remove the history record (not the file): it holds the signed address.
+        if (id !== undefined) void chrome.downloads.erase({ id }).catch(() => undefined);
+        if (error) reject(new Error(scrubUrls(error.message)));
+        else resolve(got as Downloaded);
       };
       chrome.downloads.onChanged.addListener(listener);
       chrome.downloads
-        .download({ url, filename, conflictAction: "overwrite" })
+        .download({ url, filename, conflictAction: "uniquify" })
         .then((started) => {
           if (started === undefined) return done(new Error(chrome.runtime.lastError?.message ?? "did not start"));
           id = started;
           // It may have finished before we knew its id.
           return chrome.downloads.search({ id }).then(([found]) => {
-            if (found?.state === "complete") done(null, found.fileSize);
+            if (found?.state === "complete") done(null, { size: found.fileSize, savedTo: downloadsRelative(found.filename, filename) });
             else if (found?.state === "interrupted") done(new Error(found.error ?? "interrupted"));
           });
         })

@@ -117,7 +117,7 @@ export function folderSink(root: FileSystemDirectoryHandle, { downloadsFallback 
             { fetch: (input, init) => fetch(input, init), download: browserDownload(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) },
             downloadsFallback,
           );
-          if (got.how === "downloaded") return { size: got.size, sha256: null, method: got.method };
+          if (got.how === "downloaded") return { size: got.size, sha256: null, method: got.method, savedTo: got.savedTo };
           response = got.response;
           method = got.method;
         }

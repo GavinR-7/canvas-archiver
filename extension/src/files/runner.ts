@@ -25,7 +25,7 @@ import {
   type SavedRecord,
 } from "./manifest";
 import type { Layout } from "./layout";
-import type { Method } from "./transfer";
+import { scrubUrls, type Method } from "./transfer";
 import type { CoursePlan, PlannedItem } from "./plan";
 
 export interface SaveResult {
@@ -38,6 +38,8 @@ export interface SaveResult {
   notModified?: boolean;
   /** How the bytes were obtained; "downloads" means the browser saved them under Downloads, not in the folder. */
   method?: Method;
+  /** With method "downloads": the Downloads-relative path actually written. */
+  savedTo?: string;
 }
 
 export interface FileSink {
@@ -57,10 +59,13 @@ export interface ManifestStore {
   save(plan: CoursePlan, manifest: CourseManifest): Promise<void>;
 }
 
+/** Set when the file is in the browser's Downloads folder, not in the archive folder. */
+export const IN_DOWNLOADS = "saved to Downloads, not in the archive folder";
+
 export type ItemOutcome =
-  | { source: string; path: string[]; status: "saved"; decision: Exclude<Decision, "unchanged" | "revalidate"> }
-  | { source: string; path: string[]; status: "unchanged" }
-  | { source: string; path: string[]; status: "failed"; message: string };
+  | { source: string; path: string[]; status: "saved"; decision: Exclude<Decision, "unchanged" | "revalidate">; inDownloads?: string }
+  | { source: string; path: string[]; status: "unchanged"; inDownloads?: string }
+  | { source: string; path: string[]; status: "failed"; message: string; inDownloads?: undefined };
 
 export interface RunResult {
   saved: number;
@@ -68,6 +73,8 @@ export interface RunResult {
   failed: number;
   /** Of `saved`, how many the browser's downloader wrote under Downloads because the file host refused a direct read. */
   viaDownloads: number;
+  /** Of `unchanged`, how many are only in Downloads from an earlier run (so not in the archive folder). */
+  alreadyInDownloads: number;
   outcomes: ItemOutcome[];
   cancelled: boolean;
   /** Name of the batch file written (ingest layout), or null. */
@@ -143,9 +150,13 @@ export async function runArchive(
       // A file the browser downloaded lives under Downloads, not in this folder: there is nothing here to verify.
       const onDisk = layout.verifyDisk && sink.keepsRecords && manifest.entries[item.source]?.method !== "downloads" ? await sink.size(item.path) : undefined;
       const decision = keep ? decide(item, manifest.entries[item.source], onDisk) : "new";
-      if (decision === "unchanged") return { source: item.source, path: item.path, status: "unchanged" };
-
       const prior = manifest.entries[item.source];
+      // Not re-downloaded (that would add a "(1)" copy each run), but never reported as present in the folder.
+      if (decision === "unchanged") {
+        return prior?.method === "downloads"
+          ? { source: item.source, path: item.path, status: "unchanged", inDownloads: prior.savedTo ?? item.path.join("/") }
+          : { source: item.source, path: item.path, status: "unchanged" };
+      }
       const stage = stageDir ? [...stageDir, ...item.path] : null;
       const result = await sink.save(stage ? { ...item, path: stage } : item, decision === "revalidate" ? prior : undefined);
 
@@ -166,6 +177,7 @@ export async function runArchive(
         modifiedAt: item.modifiedAt,
         savedAt: now().toISOString(),
         ...(result.method ? { method: result.method } : {}),
+        ...(result.method === "downloads" ? { savedTo: result.savedTo ?? item.path.join("/") } : {}),
         ...(result.validator !== undefined ? { validator: result.validator } : {}),
       };
       if (result.method === "downloads") viaDownloads++;
@@ -178,10 +190,16 @@ export async function runArchive(
         modifiedAt: item.modifiedAt,
         ...(stage ? { stage: stage.join("/") } : {}),
       });
-      return { source: item.source, path: item.path, status: "saved", decision: decision === "revalidate" ? "changed" : decision };
+      return {
+        source: item.source,
+        path: item.path,
+        status: "saved",
+        decision: decision === "revalidate" ? "changed" : decision,
+        ...(result.method === "downloads" ? { inDownloads: result.savedTo ?? item.path.join("/") } : {}),
+      };
     } catch (error) {
-      // Messages must not carry the signed URL; sinks throw their own text.
-      const message = error instanceof Error ? error.message : String(error);
+      // Sinks keep the signed URL out of their text; scrub again so nothing URL-shaped reaches the screen.
+      const message = scrubUrls(error instanceof Error ? error.message : String(error));
       return { source: item.source, path: item.path, status: "failed", message };
     }
   };
@@ -219,6 +237,7 @@ export async function runArchive(
     unchanged: count("unchanged"),
     failed: count("failed"),
     viaDownloads,
+    alreadyInDownloads: outcomes.filter((o) => o.status === "unchanged" && o.inDownloads !== undefined).length,
     outcomes,
     cancelled: signal?.aborted ?? false,
     batch,

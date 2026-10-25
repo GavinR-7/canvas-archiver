@@ -24,6 +24,8 @@ export interface ManifestEntry {
   validator?: string | null;
   /** How the bytes were fetched; "downloads" = saved by the browser under Downloads/<path>, not in the folder. Absent in older manifests. */
   method?: Method;
+  /** For method "downloads": where the browser put the file, relative to the Downloads folder. The archive folder does not hold it. */
+  savedTo?: string;
 }
 
 export interface CourseManifest {

@@ -16,6 +16,7 @@ import {
   loadSelection,
   pruneSelection,
   savedSources,
+  downloadsSources,
   saveSelection,
   setFolder,
   subsetPlan,
@@ -26,7 +27,7 @@ import { loadDirBindings, rememberDirBindings } from "@/src/files/dirs";
 import { loadRoot, requestRootAccess, rootAccess, type RootAccess } from "@/src/files/handle-store";
 import { archiveLayout } from "@/src/files/layout";
 import { planCourses, type CoursePlan } from "@/src/files/plan";
-import { looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
+import { IN_DOWNLOADS, looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
 import { downloadsSink, folderManifestStore, folderSink } from "@/src/files/sinks";
 import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
 import { useCourseFilter } from "@/src/ui/useCourseFilter";
@@ -57,12 +58,14 @@ function Folder({
   node,
   selected,
   saved,
+  inDownloads,
   onSelect,
   depth,
 }: {
   node: FolderNode;
   selected: ReadonlySet<string>;
   saved: ReadonlySet<string>;
+  inDownloads: ReadonlySet<string>;
   onSelect: (next: Set<string>) => void;
   depth: number;
 }) {
@@ -81,7 +84,7 @@ function Folder({
               <Tick state={tickOf(folder, selected)} label={`Select ${folder.name}`} onChange={(on) => onSelect(setFolder(selected, folder, on))} />
               {folder.name}
             </summary>
-            <Folder node={folder} selected={selected} saved={saved} onSelect={onSelect} depth={depth + 1} />
+            <Folder node={folder} selected={selected} saved={saved} inDownloads={inDownloads} onSelect={onSelect} depth={depth + 1} />
           </details>
         </li>
       ))}
@@ -94,6 +97,7 @@ function Folder({
               {file.item.size > 0 && formatBytes(file.item.size)} {formatDate(file.item.modifiedAt)}
             </span>
             {saved.has(file.item.source) && <span className="text-xs text-zinc-500">saved</span>}
+            {inDownloads.has(file.item.source) && <span className="text-xs text-zinc-500">in Downloads, not the archive folder</span>}
           </label>
         </li>
       ))}
@@ -112,6 +116,7 @@ export default function App() {
   const [plan, setPlan] = useState<CoursePlan | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [inDownloads, setInDownloads] = useState<Set<string>>(new Set());
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -140,9 +145,12 @@ export default function App() {
         setPlan(built);
         setSelected(pruneSelection(await loadSelection(next.id), built));
         setSaved(new Set());
+        setInDownloads(new Set());
         if (root && access === "granted") {
           try {
-            setSaved(savedSources(built, await folderManifestStore(folderSink(root)).load(built)));
+            const manifest = await folderManifestStore(folderSink(root)).load(built);
+            setSaved(savedSources(built, manifest));
+            setInDownloads(downloadsSources(built, manifest));
           } catch {
             // No readable manifest (new folder, or another course's): nothing is marked saved.
           }
@@ -185,7 +193,9 @@ export default function App() {
           onProgress: (done, total) => setProgress({ done, total }),
         });
         setResult(outcome);
-        setSaved((previous) => new Set([...previous, ...outcome.outcomes.filter((o) => o.status !== "failed").map((o) => o.source)]));
+        const here = (o: (typeof outcome.outcomes)[number]) => o.status !== "failed" && o.inDownloads === undefined;
+        setSaved((previous) => new Set([...previous, ...outcome.outcomes.filter(here).map((o) => o.source)]));
+        setInDownloads((previous) => new Set([...previous, ...outcome.outcomes.filter((o) => o.status !== "failed" && o.inDownloads !== undefined).map((o) => o.source)]));
       } catch (error) {
         setProblem(String(error));
       } finally {
@@ -248,7 +258,7 @@ export default function App() {
                 <EmptyState>No files found in this course.</EmptyState>
               ) : (
                 <div className="mt-2">
-                  <Folder node={tree} selected={selected} saved={saved} onSelect={select} depth={0} />
+                  <Folder node={tree} selected={selected} saved={saved} inDownloads={inDownloads} onSelect={select} depth={0} />
                 </div>
               )}
               {plan.skipped.length > 0 && <p className="mt-2 text-xs text-zinc-500">{plan.skipped.length} locked or unavailable files are not listed.</p>}
@@ -276,7 +286,7 @@ export default function App() {
         <section className="mt-6" aria-live="polite">
           <h2 className="font-medium">Done</h2>
           <p className="mt-1 text-sm">
-            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads > 0 && ` ${result.viaDownloads} came through the browser's Downloads folder (Downloads/Cornell/…) because their file host refused a direct read.`}
+            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} are in the browser's Downloads folder, not in the archive folder (their file host refused a direct read); the lines below list them.`}
           </p>
           {looksBlockedByCors(result) && (
             <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">
@@ -284,8 +294,11 @@ export default function App() {
               <button type="button" className={`${button} mt-2`} onClick={() => void download(true)}>Save to Downloads instead</button>
             </div>
           )}
-          {result.failed > 0 && (
+          {result.failed + result.viaDownloads + result.alreadyInDownloads > 0 && (
             <ul className="mt-2 max-h-48 overflow-auto text-xs text-zinc-500">
+              {result.outcomes.filter((o) => o.status !== "failed" && o.inDownloads !== undefined).slice(0, 50).map((o) => (
+                <li key={o.source}>{o.path.join("/")} — {IN_DOWNLOADS}: Downloads/{o.inDownloads}</li>
+              ))}
               {result.outcomes.filter((o) => o.status === "failed").slice(0, 50).map((o) => (
                 <li key={o.source}>{o.path.join("/")} — {o.status === "failed" && o.message}</li>
               ))}
