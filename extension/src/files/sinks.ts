@@ -4,7 +4,9 @@
  * exercised by unit tests: they need a browser.
  */
 
+import { assertCanvasOrigin } from "@/src/canvas/url-guard";
 import { CANVAS_ORIGINS } from "@/src/config/canvas";
+import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { emptyManifest, MANIFEST_FILE, parseManifest, type CourseManifest } from "./manifest";
 import type { FileSink, ManifestStore } from "./runner";
 import { Sha256 } from "./sha256";
@@ -79,13 +81,26 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
         body = new Blob([bytes]).stream() as ReadableStream<Uint8Array>;
       } else {
         let response: Response;
+        // Gradescope files need the signed-in session, so the origin is checked first:
+        // the cookie only ever goes to Gradescope (GET, read-only).
+        if (item.session === "gradescope") assertCanvasOrigin(item.url as string, GRADESCOPE_ORIGIN);
         try {
-          response = await fetch(item.url as string, { credentials: "omit", redirect: "follow" });
+          response = await fetch(
+            item.url as string,
+            item.session === "gradescope"
+              ? { method: "GET", credentials: "include", redirect: "follow" }
+              : { credentials: "omit", redirect: "follow" },
+          );
         } catch {
           // A bare TypeError: network failure or the host refusing a cross-origin read.
           throw new Error("blocked: the file host did not allow the browser to read this file");
         }
-        if (!response.ok || !response.body) throw new Error(`Canvas answered ${response.status}`);
+        if (item.session === "gradescope" && response.redirected && /\/(login|saml)\b/.test(new URL(response.url).pathname)) {
+          throw new Error("Gradescope session expired: sign in to Gradescope and run again");
+        }
+        if (!response.ok || !response.body) {
+          throw new Error(`${item.session === "gradescope" ? "Gradescope" : "Canvas"} answered ${response.status}`);
+        }
         body = response.body;
       }
 
@@ -134,6 +149,7 @@ export function downloadsSink(): FileSink {
     },
     async save(item) {
       let url: string;
+      if (item.session) throw new Error("Gradescope files need the folder option; the Downloads fallback cannot use your Gradescope session");
       if (item.content !== null) {
         url = `data:text/html;charset=utf-8,${encodeURIComponent(item.content)}`;
       } else {

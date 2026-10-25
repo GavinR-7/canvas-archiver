@@ -15,6 +15,8 @@ export interface ManifestEntry {
   /** Canvas's modified time at save. Null for items Canvas gives no timestamp (syllabus). */
   modifiedAt: string | null;
   savedAt: string;
+  /** Version marker for items whose host gives no modified time (Gradescope). */
+  fingerprint?: string;
 }
 
 export interface CourseManifest {
@@ -71,6 +73,8 @@ export function decide(
   if (entry.path.join("/") !== item.path.join("/")) return "changed";
   if (onDiskSize !== undefined && onDiskSize !== entry.size) return onDiskSize === null ? "new" : "changed";
   if (item.content !== null) return entry.sha256 === hashText(item.content) ? "unchanged" : "changed";
+  // Gradescope reports neither size nor time before download: the URL path is the version.
+  if (item.fingerprint !== undefined) return entry.fingerprint === item.fingerprint ? "unchanged" : "changed";
   // The size Canvas reports and the bytes written can differ (encodings, CDN), so
   // size only decides when Canvas gave no modified time.
   if (item.modifiedAt !== null) return entry.modifiedAt === item.modifiedAt ? "unchanged" : "changed";

@@ -60,11 +60,24 @@ export interface CanvasDocument {
   htmlUrl: string | null;
 }
 
+/** A file from a system other than Canvas (Gradescope handouts), fetched with that system's session. */
+export interface ExternalFile {
+  /** Stable id, e.g. `gradescope:file/<assignment>/<key>`. */
+  source: string;
+  system: "gradescope";
+  filename: string;
+  url: string;
+  /** What identifies this version of the file; the manifest skips it while this is unchanged. */
+  fingerprint: string;
+}
+
 export interface CourseSources {
   modules: CanvasModule[];
   files: CanvasFile[];
   folders: CanvasFolder[];
   documents: CanvasDocument[];
+  /** Optional so Canvas-only callers are unchanged. */
+  external?: ExternalFile[];
 }
 
 export interface PlannedItem {
@@ -79,6 +92,10 @@ export interface PlannedItem {
   url: string | null;
   /** Set for inline items; null for downloads. */
   content: string | null;
+  /** Download needs this system's session cookie (and only that host). Absent means Canvas's signed URL, no cookies. */
+  session?: "gradescope";
+  /** Version marker for downloads whose host gives no modified time; see `decide`. */
+  fingerprint?: string;
 }
 
 export type SkipReason = "locked" | "no-url";
@@ -167,6 +184,25 @@ export function planCourse(
     const isSyllabus = /syllabus/i.test(file.displayName);
     const sub = folderSegments(file.folderId === null ? undefined : folderById.get(file.folderId));
     placeFile(isSyllabus ? layout.syllabusDir(dir) : layout.looseDir(dir, sub), file);
+  }
+
+  for (const ext of sources.external ?? []) {
+    const target = layout.externalDir(dir, ext.system);
+    entries.push({
+      dir: target,
+      name: sanitizeFilename(ext.filename, "handout.pdf"),
+      build: (name) => ({
+        source: ext.source,
+        courseId: course.id,
+        path: [...target, name],
+        size: 0,
+        modifiedAt: null,
+        url: ext.url,
+        content: null,
+        session: ext.system,
+        fingerprint: ext.fingerprint,
+      }),
+    });
   }
 
   for (const doc of documents) {

@@ -121,6 +121,7 @@ export async function runArchive(
         sha256: result.sha256,
         modifiedAt: item.modifiedAt,
         savedAt: now().toISOString(),
+        ...(item.fingerprint !== undefined ? { fingerprint: item.fingerprint } : {}),
       };
       saved.push({
         course: plan.folder,

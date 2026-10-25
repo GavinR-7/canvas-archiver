@@ -14,6 +14,7 @@ import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { byDueDate } from "@/src/lib/task-status";
 import type { Task } from "@/src/types/canvas";
 import { assertCanvasOrigin } from "@/src/canvas/url-guard";
+import { listGradescopeFiles, type GradescopeListing } from "./files";
 import { parseAssignments, parseCourses, type GradescopeCourse } from "./parse";
 
 export class GradescopeSessionExpiredError extends SessionExpiredError {
@@ -23,7 +24,7 @@ export class GradescopeSessionExpiredError extends SessionExpiredError {
   }
 }
 
-async function getHtml(path: string): Promise<{ html: string; url: string }> {
+export async function getHtml(path: string): Promise<{ html: string; url: string }> {
   const url = assertCanvasOrigin(`${GRADESCOPE_ORIGIN}${path}`, GRADESCOPE_ORIGIN);
 
   const response = await fetch(url, {
@@ -85,4 +86,26 @@ export async function fetchGradescopeTasks(
       return due >= now.getTime() && due <= end;
     })
     .sort(byDueDate);
+}
+
+/**
+ * Handouts for the file archive. Never throws: any failure, including a
+ * signed-out session, comes back in `errors` so Canvas files are unaffected.
+ */
+export async function fetchGradescopeFiles(
+  now: Date = new Date(),
+  signal?: AbortSignal,
+): Promise<GradescopeListing> {
+  try {
+    const { html } = await getHtml("/account");
+    const courses = parseCourses(html);
+    if (courses.length === 0 && !/courseList/.test(html)) throw new GradescopeSessionExpiredError();
+    return await listGradescopeFiles(
+      currentCourses(courses, now),
+      async (path) => (await getHtml(path)).html,
+      signal,
+    );
+  } catch (error) {
+    return { courses: [], errors: [(error as Error).message] };
+  }
 }

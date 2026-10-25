@@ -10,6 +10,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { fetchCourseSources } from "@/src/files/api";
+import { fetchGradescopeFiles } from "@/src/gradescope/api";
+import { withGradescope } from "@/src/gradescope/files";
 import { layouts, type Layout } from "@/src/files/layout";
 import {
   forgetRoot,
@@ -48,6 +50,7 @@ export default function App() {
   const [plans, setPlans] = useState<CoursePlan[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,6 +105,7 @@ export default function App() {
   const buildPlan = useCallback(async () => {
     setBusy(true);
     setProblem(null);
+    setNotice(null);
     setResult(null);
     setPlans(null);
     try {
@@ -110,7 +114,18 @@ export default function App() {
         setStatus(`Reading ${course.courseCode || course.name}…`);
         inputs.push({ course, sources: await fetchCourseSources(course.id) });
       }
-      setPlans(planCourses(inputs, layout));
+      // Gradescope is best-effort: whatever goes wrong there is a notice, and the Canvas plan stands.
+      setStatus("Reading Gradescope handouts…");
+      const listing = await fetchGradescopeFiles();
+      const handouts = listing.courses.reduce((n, c) => n + c.files.length, 0);
+      setNotice(
+        listing.errors.length > 0
+          ? `Gradescope: ${handouts} handouts found; ${listing.errors.length} problem(s), e.g. ${listing.errors[0]}. Canvas files are unaffected.`
+          : handouts > 0
+            ? `Gradescope: ${handouts} handouts found.`
+            : null,
+      );
+      setPlans(planCourses(withGradescope(inputs, listing), layout));
     } catch (error) {
       setProblem(`Could not read your courses from Canvas: ${(error as Error).message}`);
     } finally {
@@ -168,6 +183,7 @@ export default function App() {
       </label>
 
       {snapshot.error && <div className="mt-4"><ErrorBanner error={snapshot.error} canvasOrigin={DEFAULT_CANVAS_ORIGIN} /></div>}
+      {notice && <p className="mt-4 rounded-lg border border-zinc-400/50 bg-zinc-500/10 p-3 text-sm">{notice}</p>}
       {problem && <p role="alert" className="mt-4 rounded-lg border border-red-400/50 bg-red-500/10 p-3 text-sm">{problem}</p>}
 
       <section className="mt-6">
