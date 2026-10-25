@@ -25,7 +25,7 @@ export default defineConfig({
     // `downloads` is used only by the "Save to Downloads instead" fallback.
     permissions: ["storage", "downloads", "alarms"],
     // due.json sync is opt-in: GitHub access is requested from the options page only when it is turned on.
-    optional_host_permissions: ["https://api.github.com/*"],
+    optional_host_permissions: ["https://api.github.com/*", "https://api.anthropic.com/*"],
     host_permissions: [...hostPermissions, ...gradescopeHostPermissions, ...edHostPermissions],
     action: {
       default_title: "Canvas Archiver",
