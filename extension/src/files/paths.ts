@@ -59,3 +59,24 @@ export function uniqueNames(names: string[]): string[] {
     return candidate;
   });
 }
+
+/** `05 EM Waves & Optics` → `em-waves-optics`. Lower-case ASCII, for slugs in the ingest layout. */
+export function slugify(text: string, fallback = "item", max = 40): string {
+  const slug = text
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, max)
+    .replace(/-+$/, "");
+  return slug || fallback;
+}
+
+export const ROOT_FOLDER = "Cornell";
+
+export function courseFolderName(course: { name: string; courseCode: string }): string {
+  const { courseCode, name } = course;
+  const label = courseCode && name && name !== courseCode ? `${courseCode} ${name}` : name || courseCode;
+  return sanitizeSegment(label, "Course");
+}
