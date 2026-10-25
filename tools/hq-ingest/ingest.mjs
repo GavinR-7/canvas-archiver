@@ -15,13 +15,28 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, copyFileSync,
+  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, copyFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 const SLUG = /^[a-z0-9]+$/;
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Throws if any component of `rel` below `base` is a symlink. Missing components are fine (they get created
+ * as plain directories). `base` itself (the configured inbox or root) may be a link; nothing inside may be.
+ */
+function assertNoLinks(base, rel) {
+  let cur = base;
+  for (const part of rel.split("/")) {
+    cur = path.join(cur, part);
+    let st;
+    try { st = lstatSync(cur); } catch (error) { if (error?.code === "ENOENT") return; throw error; }
+    if (st.isSymbolicLink()) throw new Error(`refused: symlink in path (${path.relative(base, cur)})`);
+  }
+}
+const hasLinks = (base, rel) => { try { assertNoLinks(base, rel); return false; } catch { return true; } };
 
 export function parseArgs(argv) {
   const out = { dryRun: false };
@@ -132,7 +147,9 @@ export function ingest({ inbox, root, dryRun = false, today = todayISO() }) {
   };
 
   const batchDir = path.join(inbox, "_batches");
-  const batchNames = existsSync(batchDir) ? readdirSync(batchDir).filter((n) => n.endsWith(".json")).sort() : [];
+  const batchesLinked = hasLinks(inbox, "_batches");
+  if (batchesLinked) report.kept.push("_batches (symlink, not read)");
+  const batchNames = !batchesLinked && existsSync(batchDir) ? readdirSync(batchDir).filter((n) => n.endsWith(".json")).sort() : [];
   const listed = new Set();
   const touched = new Set();
 
@@ -161,13 +178,18 @@ export function ingest({ inbox, root, dryRun = false, today = todayISO() }) {
       const from = path.join(inbox, staged ?? entry.path);
       listed.add(path.resolve(from));
       const courseDir = path.join(root, course);
-      if (!existsSync(courseDir)) { report.unknownCourses.push(entry.path); allLanded = false; continue; }
+      if (hasLinks(root, course) || !existsSync(courseDir)) { report.unknownCourses.push(entry.path); allLanded = false; continue; }
 
       const ledgerFile = path.join(courseDir, "ledger.json");
       const ledger = readJson(ledgerFile, {});
       const prior = ledger[entry.source];
 
       try {
+        // Every component of the source and of everything written under the course folder must be a plain
+        // file or directory: a symlink would let a valid manifest read, write or delete outside the tree.
+        assertNoLinks(inbox, staged ?? entry.path);
+        const textRelPath = `text/${dest.relPath}.txt`;
+        for (const rel of [dest.relPath, `${dest.relPath}.v${(prior?.version ?? 1)}`, textRelPath, "index.md", "ledger.json", "course.json"]) assertNoLinks(courseDir, rel);
         if (!existsSync(from)) {
           // Already ingested on an earlier partial run, and the file was cleaned up: fine. Otherwise it is missing.
           if (prior && prior.sha256 === entry.sha256) { bump(course, "skipped"); continue; }
@@ -239,26 +261,28 @@ export function ingest({ inbox, root, dryRun = false, today = todayISO() }) {
     if (!existsSync(dir)) return;
     for (const n of readdirSync(dir)) {
       const p = path.join(dir, n);
-      if (statSync(p).isDirectory()) prune(p);
+      if (lstatSync(p).isDirectory()) prune(p); // lstat: a linked directory is an entry, never traversed or removed through
     }
     if (!dryRun && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
   };
-  prune(path.join(inbox, "_staged"));
+  if (!hasLinks(inbox, "_staged")) prune(path.join(inbox, "_staged"));
+  else report.kept.push("_staged (symlink, not cleaned)");
 
   // Files in the inbox that no batch lists are ignored and reported (contract).
   const walk = (dir) => {
     for (const n of existsSync(dir) ? readdirSync(dir) : []) {
       if (n === "_batches") continue;
       const p = path.join(dir, n);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (!listed.has(path.resolve(p))) report.strays.push(path.relative(inbox, p));
+      if (lstatSync(p).isDirectory()) walk(p);
+      else if (!listed.has(path.resolve(p))) report.strays.push(path.relative(inbox, p)); // links are reported, not followed
     }
   };
   walk(inbox);
 
   if (!dryRun) {
     const stateFile = path.join(root, ".ingest-state.json");
-    writeJson(stateFile, { lastRun: new Date().toISOString(), inbox });
+    if (hasLinks(root, ".ingest-state.json")) report.kept.push(".ingest-state.json (symlink, not written)");
+    else writeJson(stateFile, { lastRun: new Date().toISOString(), inbox });
   }
   return report;
 }
