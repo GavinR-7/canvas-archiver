@@ -27,14 +27,16 @@ export async function syncDue(
     await saveStatus({ at: now.toISOString(), ok: false, message: outcome.message });
     return outcome;
   }
-  const file = buildDueFile(snapshot.tasks, now);
-  // Healthy empty refreshes must clear removed deadlines. A partial refresh
-  // cannot prove that nothing is due, even when its cached tasks aged out.
-  if (file.items.length === 0 && (snapshot.error || snapshot.gradescopeError || snapshot.edError || snapshot.syllabusError)) {
-    const message = "Some deadline sources did not refresh; empty sync skipped to keep existing deadlines.";
+  // Replacing the whole remote list requires affirmative read evidence. This
+  // also protects nonempty partial lists from deleting another source's rows.
+  const complete = snapshot.sourceCompleteness;
+  if (!complete || complete.canvas !== true || complete.gradescope !== true || complete.syllabus !== true || complete.ed !== true ||
+      snapshot.error || snapshot.gradescopeError || snapshot.edError || snapshot.syllabusError) {
+    const message = "Deadline sources are incomplete or unverified; sync skipped to keep existing deadlines.";
     await saveStatus({ at: now.toISOString(), ok: false, message });
     return { status: "failed", message };
   }
+  const file = buildDueFile(snapshot.tasks, now);
   const outcome = await putFile(settings, serialize(file), (existing) => sameContent(existing, file), `chore: update ${settings.path} (${file.items.length} deadlines)`, doFetch);
   // Classes go in the same pass, only when the person has entered some.
   let scheduleNote = "";

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_SNAPSHOT, type Snapshot } from "@/src/lib/messages";
 
 const mocks = vi.hoisted(() => ({
-  canvas: vi.fn(async () => []), gradescope: vi.fn(async () => []),
-  syllabus: vi.fn(async () => []), ed: vi.fn(async () => []), save: vi.fn(async () => {}),
+  canvas: vi.fn(async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null })), gradescope: vi.fn(async () => []),
+  syllabus: vi.fn(async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null })), ed: vi.fn(async () => []), save: vi.fn(async () => {}),
 }));
 vi.mock("@/src/canvas/api", () => ({ fetchUser: async () => ({ id: 1 }), fetchActiveCourses: async () => [], fetchUpcomingTasks: mocks.canvas }));
 vi.mock("@/src/gradescope/api", () => ({ fetchGradescopeTasks: mocks.gradescope }));

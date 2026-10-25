@@ -9,6 +9,7 @@ import type { CanvasUser, Course, Task } from "@/src/types/canvas";
 import { getAll, getOne } from "./client";
 import { AccessDeniedError, NotFoundError } from "./errors";
 import { normalizeCourse, normalizePlannerItem, normalizeUser } from "./normalize";
+import type { TaskRead } from "@/src/lib/source-read";
 import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
 import { termSortKey } from "./terms";
@@ -61,7 +62,7 @@ export async function fetchUpcomingTasks(
   days: number = UPCOMING_DAYS,
   now: Date = new Date(),
   overdueDays = 0,
-): Promise<Task[]> {
+): Promise<TaskRead> {
   const window = taskWindow(now, days, overdueDays);
 
   let raw: Record<string, unknown>[];
@@ -71,20 +72,21 @@ export async function fetchUpcomingTasks(
       end_date: new Date(window.to).toISOString(),
     });
   } catch (error) {
-    // A course with the feature disabled must not take the whole view down.
+    // This request is user-scoped. Denial is not proof that no course has deadlines.
     if (error instanceof AccessDeniedError || error instanceof NotFoundError) {
-      return [];
+      return { tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error };
     }
     throw error;
   }
 
   const lookup = new Map(courses.map((course) => [course.id, course]));
 
-  return raw
+  const tasks = raw
     .map((item) => normalizePlannerItem(item, lookup))
     .filter((task): task is Task => task !== null)
     // The planner respects its own window, but an item whose due date was
     // nudged after the fact can still arrive outside it.
     .filter((task) => inTaskWindow(task.dueAt, window))
     .sort(byDueDate);
+  return { tasks, complete: true, unavailableCourseIds: [], error: null };
 }

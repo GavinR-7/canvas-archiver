@@ -7,6 +7,8 @@
  * It asks the service worker for a snapshot and renders it.
  */
 
+import { UPCOMING_DAYS } from "@/src/canvas/api";
+import { taskWindow, tasksInWindow } from "@/src/lib/task-window";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { taskStatus } from "@/src/lib/task-status";
@@ -37,6 +39,8 @@ export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
   const { user, courses, tasks, error, gradescopeError } = snapshot;
+
+  const upcoming = tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS));
 
   const needsAttention = tasks.filter((task) => {
     const status = taskStatus(task, now);
@@ -133,7 +137,7 @@ export default function App() {
             onClick={openUpcoming}
             className="mt-4 w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
-            Upcoming — next 14 days ({tasks.length})
+            Upcoming — next {UPCOMING_DAYS} days ({upcoming.length})
           </button>
           <button
             type="button"

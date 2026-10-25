@@ -10,7 +10,7 @@
  * source of silent `undefined`s.
  */
 
-import type { CanvasUser, Course, Task } from "@/src/types/canvas";
+import type { CanvasUser, Course, Task, TaskSource } from "@/src/types/canvas";
 
 /** Messages a UI surface can send to the service worker. */
 export type Request =
@@ -56,6 +56,8 @@ export interface Snapshot {
   edError?: SnapshotError | null;
   /** Failed syllabus read; used to keep an incomplete empty export from erasing deadlines. */
   syllabusError?: SnapshotError | null;
+  /** Affirmative results of this refresh, absent on legacy caches. Never inferred from null errors. */
+  sourceCompleteness?: Record<TaskSource, boolean>;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {

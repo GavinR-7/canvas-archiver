@@ -71,10 +71,11 @@ The scheduler cache and source reads now cover the due.json contract: seven
 rolling days overdue through sixty days ahead, from one shared refresh clock.
 Upcoming remains a fourteen-day view; the weekly schedule can use the broader
 cache. Exports normalize timestamps to UTC milliseconds and compare timezone
-as part of idempotence. Healthy empty refreshes clear removed deadlines;
-incomplete empty refreshes preserve the remote file. Syllabus failures are
-recorded so they cannot masquerade as an authoritative empty result. Partial
-nonempty refreshes retain the existing per-source cache behavior.
+as part of idempotence. Healthy empty refreshes clear removed deadlines only with affirmative source
+completeness. Incomplete or legacy snapshots cannot replace the remote list,
+even when nonempty. Planner denials and each unreadable syllabus course retain
+cached dates; other readable courses and sources still refresh locally.
+The popup's fourteen-day count uses the same bounds as Upcoming.
 
 Offline tests cover all four source adapters, inclusive bounds across DST,
 worker wiring, empty/failing refreshes, stable timestamps and the Upcoming
@@ -153,3 +154,22 @@ refresh-and-upload per worker lifetime. Failed schedule uploads now mark the
 combined run as failed in Settings. Offline regressions cover hung fetch/body,
 fresh-SHA conflict recovery, concurrent calls and partial success. Still
 unverified: live token/permission behavior and actual worker termination.
+
+## PR #13 repair: Anvil T-475 and connector findings
+
+The original null-error check missed planner and syllabus readers suppressing
+403/404 into empty lists. Both readers now return explicit read results;
+syllabus results also identify unreadable courses. The worker records positive
+per-source completeness and retains cached deadlines for unavailable reads.
+Sync requires every required source to be affirmatively complete before
+replacing the destination, including legacy-cache and nonempty partial cases.
+This deliberately postpones GitHub updates while any source is unavailable;
+it preserves remote-only rows that the local cache may never have loaded.
+
+Regression tests use the real Canvas HTTP client, readers, background
+SYNC_NOW and sync runner against synthetic services and a populated synthetic
+remote. They cover planner/syllabus 403/404, cache retention, partial syllabus
+success, legacy unknown completeness and genuine empty success. Rendered popup
+and Upcoming tests cover matching fourteen-day counts over spring/fall DST.
+No live account or real destination is used. HOLD remains pending Anvil's
+independent review of the repaired head.

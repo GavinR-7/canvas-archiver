@@ -33,7 +33,9 @@ Written by the Canvas Archiver extension to the GitHub repo the person chooses i
 - `dueDay` is the Eastern calendar day, so a reader never converts UTC.
 - Duplicates across sources are already merged (priority Canvas > Gradescope > Ed > syllabus).
 - Contains no grades, scores, files or course content.
-- A successful empty refresh writes `items: []`, clearing removed/completed-window deadlines instead of leaving an old file forever. If any source failed and the export would be empty (including after cached tasks age out), the write is skipped and Settings reports the reason. With nonempty data, fresh sources and retained cached tasks still sync independently. `generatedAt` is the export time, not proof that every source refreshed successfully.
+- A successful empty refresh writes `items: []`, clearing removed/out-of-window deadlines instead of leaving an old file forever. Every replacement (empty or nonempty) requires affirmative completeness from the current Canvas planner, Gradescope, syllabus and Ed reads. Null error flags and legacy caches without this evidence cannot authorize replacement.
+- Planner 403/404 responses report incomplete reads and preserve cached Canvas deadlines. Per-course syllabus failures (including 403/404, restricted courses and missing response fields) report incomplete reads and retain that course's cached dates, while readable courses still refresh locally. Any failed or unverified source prevents the whole-list GitHub write and Settings reports the reason. This preserves remote-only deadlines too; copying only a nonempty partial cache could otherwise erase them.
+- Local healthy sources still refresh during an outage. GitHub replacement resumes after all required readers succeed. `generatedAt` is the export time, not a per-source freshness timestamp. Completeness evidence stays in the local snapshot; the public due.json version-1 shape is unchanged.
 - Idempotence ignores `generatedAt`, but compares the version, timezone and normalized item list.
 
 Token: fine-grained, one repository, Contents read and write. Stored in the extension's local storage only.

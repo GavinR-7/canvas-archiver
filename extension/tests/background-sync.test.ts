@@ -3,7 +3,7 @@ import { EMPTY_SNAPSHOT } from "@/src/lib/messages";
 
 const mocks = vi.hoisted(() => ({
   sync: vi.fn(), user: vi.fn(async () => ({ id: 1, name: "Student" })),
-  courses: vi.fn(async () => []), tasks: vi.fn(async () => []),
+  courses: vi.fn(async () => []), tasks: vi.fn(async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null })),
 }));
 vi.mock("@/src/canvas/api", () => ({ fetchUser: mocks.user, fetchActiveCourses: mocks.courses, fetchUpcomingTasks: mocks.tasks, UPCOMING_DAYS: 14 }));
 vi.mock("@/src/sync/run", () => ({ syncDue: mocks.sync }));
@@ -12,7 +12,7 @@ vi.mock("@/src/schedule/model", () => ({ loadClasses: async () => [] }));
 vi.mock("@/src/consent/consent", () => ({ hasConsent: async () => true }));
 vi.mock("@/src/feed/settings", () => ({ loadFeed: async () => ({ enabled: false }), minutesUntilHour: () => 1 }));
 vi.mock("@/src/gradescope/api", () => ({ fetchGradescopeTasks: async () => [] }));
-vi.mock("@/src/dates/syllabus", () => ({ fetchSyllabusTasks: async () => [] }));
+vi.mock("@/src/dates/syllabus", () => ({ fetchSyllabusTasks: async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null }) }));
 vi.mock("@/src/ed/api", () => ({ fetchEdTasks: async () => [] }));
 vi.mock("@/src/lib/storage", () => ({ loadSnapshot: async () => EMPTY_SNAPSHOT, saveSnapshot: async () => {} }));
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });

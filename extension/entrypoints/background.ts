@@ -40,6 +40,7 @@ import { loadClasses } from "@/src/schedule/model";
 import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
 import { hasConsent } from "@/src/consent/consent";
 import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS } from "@/src/lib/task-window";
+import type { TaskRead } from "@/src/lib/source-read";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -80,11 +81,12 @@ async function refresh(): Promise<Snapshot> {
   // Gradescope runs alongside Canvas and fails independently. Its tasks from
   // the previous fetch are kept on failure so a flaky page doesn't blank them.
   const gradescope = fetchGradescopeTasks(DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
-    (tasks) => ({ tasks, error: null as SnapshotError | null }),
+    (tasks) => ({ tasks, complete: true, error: null as SnapshotError | null }),
     (error: unknown) => {
       console.warn("[canvas-archiver] gradescope refresh failed", error);
       return {
         tasks: previous.tasks.filter((task) => task.source === "gradescope"),
+        complete: false,
         error: describeError(error, "Gradescope"),
       };
     },
@@ -94,17 +96,21 @@ async function refresh(): Promise<Snapshot> {
     // Courses first: tasks are labelled with their course name, so the lookup
     // has to exist before planner items are normalised.
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
-    const tasks = await fetchUpcomingTasks(courses, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS);
+    const planner = await fetchUpcomingTasks(courses, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS);
+    const tasks = planner.complete ? planner.tasks : previous.tasks.filter((task) => task.source === "canvas");
 
     // Dates written in prose (syllabus, Ed announcements) are best-effort: each
     // fails alone, and its previous result is kept rather than blanking.
     const current = courses.filter((c) => !c.restricted);
-    let syllabusError: SnapshotError | null = null;
-    const syllabus = await fetchSyllabusTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown) => {
-      console.warn("[canvas-archiver] syllabus dates failed", error);
-      syllabusError = describeError(error, "Canvas syllabus");
-      return previous.tasks.filter((task) => task.source === "syllabus");
-    });
+    const syllabusRead = await fetchSyllabusTasks(courses, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
+      tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error,
+    }));
+    const unavailable = new Set(syllabusRead.unavailableCourseIds);
+    const syllabus = [
+      ...previous.tasks.filter((task) => task.source === "syllabus" && unavailable.has(task.courseId)),
+      ...syllabusRead.tasks,
+    ];
+    const syllabusError = syllabusRead.complete ? null : describeError(syllabusRead.error, "Canvas syllabus");
     let edError: SnapshotError | null = null;
     const ed = await fetchEdTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown) => {
       console.warn("[canvas-archiver] ed refresh failed", error);
@@ -118,10 +124,11 @@ async function refresh(): Promise<Snapshot> {
       courses,
       tasks: mergeTasks([...tasks, ...gs.tasks, ...syllabus, ...ed]),
       fetchedAt: new Date().toISOString(),
-      error: null,
+      error: planner.complete ? null : describeError(planner.error),
       gradescopeError: gs.error,
       edError,
       syllabusError,
+      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusRead.complete, ed: edError === null },
     };
     await saveSnapshot(snapshot);
     return snapshot;
@@ -136,6 +143,7 @@ async function refresh(): Promise<Snapshot> {
       tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...gs.tasks]),
       error: describeError(error),
       gradescopeError: gs.error,
+      sourceCompleteness: { canvas: false, gradescope: gs.complete, syllabus: false, ed: false },
     };
     await saveSnapshot(failed);
     return failed;

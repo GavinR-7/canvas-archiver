@@ -33,13 +33,15 @@ describe("scheduler source windows", () => {
       course_id: 1, plannable_id: index + 1, plannable_type: "assignment", plannable_date: dueAt,
       plannable: { id: index + 1, title: "Work " + index, due_at: dueAt },
     })));
-    const tasks = await fetchUpcomingTasks([course], 60, now, 7);
+    const { tasks, complete } = await fetchUpcomingTasks([course], 60, now, 7);
+    expect(complete).toBe(true);
     expect(client.getAll).toHaveBeenCalledWith("/planner/items", {
       start_date: dates[1], end_date: dates[4],
     });
     expect(tasks.map((t) => t.dueAt)).toEqual(dates.slice(1, 5));
     const upcoming = await fetchUpcomingTasks([course], 14, now);
-    expect(upcoming).toEqual([]);
+    expect(upcoming.tasks).toEqual([]);
+    expect(upcoming.complete).toBe(true);
   });
   it("includes recently overdue and far-future Gradescope assignments", async () => {
     const rows = dates.map((dueAt, index) => '<tr><th><a href="/courses/900001/assignments/' + (index + 1) +
@@ -57,7 +59,8 @@ describe("scheduler source windows", () => {
   it("uses the same overdue window for syllabus and Ed candidates", async () => {
     const text = "<p>Prelim 1: October 20, 2026 at 7pm.</p><p>Final exam: December 15, 2026 at 7pm.</p>";
     client.getOne.mockResolvedValue({ syllabus_body: text });
-    const syllabus = await fetchSyllabusTasks([course], 60, now, 7);
+    const { tasks: syllabus, complete } = await fetchSyllabusTasks([course], 60, now, 7);
+    expect(complete).toBe(true);
     expect(syllabus).toHaveLength(2);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith("/api/user")
       ? { courses: [{ id: 9, code: "CS 3700" }] }
@@ -81,12 +84,12 @@ describe("due.json contract", () => {
     expect(tasksInWindow(cache, taskWindow(now, 14)).map((t) => t.id)).toEqual(["now", "edge"]);
     expect(taskWindow(now, 14).to - taskWindow(now, 14).from).toBe(14 * 86_400_000);
   });
-  it("keeps healthy sources syncing when another source uses cached deadlines", async () => {
+  it("preserves remote deadlines while another source is incomplete", async () => {
     vi.stubGlobal("chrome", { storage: { local: { set: vi.fn(async () => {}) } } });
     const doFetch = vi.fn(async (_url: unknown, init?: RequestInit) => new Response("{}", { status: init?.method === "PUT" ? 201 : 404 })) as unknown as typeof fetch;
     expect(await syncDue({ ...EMPTY_SNAPSHOT, fetchedAt: now.toISOString(), tasks: [task()],
-      edError: { kind: "network", message: "offline" } }, settings, now, doFetch)).toMatchObject({ status: "updated" });
-    expect(doFetch).toHaveBeenCalledTimes(2);
+      edError: { kind: "network", message: "offline" } }, settings, now, doFetch)).toMatchObject({ status: "failed" });
+    expect(doFetch).not.toHaveBeenCalled();
   });
   it("keeps exact UTC boundaries across the DST change and drops invalid dates", () => {
     const file = buildDueFile([...dates, "invalid"].map((dueAt, i) => task({ id: String(i), dueAt })), now);
@@ -112,7 +115,7 @@ describe("due.json contract", () => {
       }
       return new Response(JSON.stringify({ sha: "old", content: btoa(serialize(buildDueFile([task()], now))) }));
     }) as unknown as typeof fetch;
-    expect(await syncDue({ ...EMPTY_SNAPSHOT, fetchedAt: now.toISOString() }, settings, now, doFetch)).toMatchObject({ status: "updated" });
+    expect(await syncDue({ ...EMPTY_SNAPSHOT, fetchedAt: now.toISOString(), sourceCompleteness: { canvas: true, gradescope: true, ed: true, syllabus: true } }, settings, now, doFetch)).toMatchObject({ status: "updated" });
     expect(JSON.parse(written).items).toEqual([]);
   });
   it.each(["error", "gradescopeError", "edError", "syllabusError"])("preserves remote deadlines when an empty export has a %s refresh error", async (key) => {
