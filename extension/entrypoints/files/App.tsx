@@ -22,6 +22,7 @@ import {
   saveRoot,
   type RootAccess,
 } from "@/src/files/handle-store";
+import { loadDirBindings, rememberDirBindings } from "@/src/files/dirs";
 import { planCourses, summarize, type CoursePlan } from "@/src/files/plan";
 import { looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
 import { downloadsSink, folderManifestStore, folderSink, storageManifestStore } from "@/src/files/sinks";
@@ -119,7 +120,8 @@ export default function App() {
       // The Canvas plan is published first and on its own: Gradescope is optional and may hang,
       // and must never hold up (or block) downloading Canvas files.
       const generation = ++planGeneration.current;
-      setPlans(planCourses(inputs, layout));
+      const bound = await loadDirBindings(layout.id);
+      setPlans(planCourses(inputs, layout, bound));
       setBusy(false);
       setStatus("Reading Gradescope handouts…");
       void fetchGradescopeFiles().then((listing) => {
@@ -132,7 +134,7 @@ export default function App() {
               ? `Gradescope: ${handouts} handouts found.`
               : null,
         );
-        if (handouts > 0) setPlans(planCourses(withGradescope(inputs, listing), layout));
+        if (handouts > 0) setPlans(planCourses(withGradescope(inputs, listing), layout, bound));
         setStatus(null);
       });
     } catch (error) {
@@ -154,6 +156,7 @@ export default function App() {
       setProgress(null);
       try {
         const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle);
+        await rememberDirBindings(layout.id, plans); // each course keeps this folder from now on
         const store = layout.id === "ingest" ? storageManifestStore() : folderManifestStore(sink);
         const outcome = await runArchive(plans, layout, sink, store, {
           signal: abort.current.signal,

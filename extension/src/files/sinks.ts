@@ -7,7 +7,7 @@
 import { assertCanvasOrigin } from "@/src/canvas/url-guard";
 import { CANVAS_ORIGINS } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
-import { emptyManifest, MANIFEST_FILE, parseManifest, type CourseManifest } from "./manifest";
+import { emptyManifest, ForeignCourseError, MANIFEST_FILE, manifestOwner, parseManifest, type CourseManifest } from "./manifest";
 import type { FileSink, ManifestStore } from "./runner";
 import { Sha256 } from "./sha256";
 
@@ -196,7 +196,11 @@ export function downloadsSink(): FileSink {
 export function folderManifestStore(sink: FileSink): ManifestStore {
   return {
     async load(plan) {
-      return parseManifest(await sink.readText([...plan.dir, MANIFEST_FILE]), plan.courseId);
+      const text = await sink.readText([...plan.dir, MANIFEST_FILE]);
+      // A folder that belongs to another course is never treated as empty: the run would overwrite it.
+      const owner = manifestOwner(text);
+      if (owner !== null && owner !== plan.courseId) throw new ForeignCourseError(plan.dir.join("/"), owner);
+      return parseManifest(text, plan.courseId);
     },
     async save(plan, manifest) {
       await sink.writeText([...plan.dir, MANIFEST_FILE], `${JSON.stringify(manifest, null, 2)}\n`);

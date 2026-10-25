@@ -25,6 +25,14 @@ The v2 deliverables (download folder, all files, AI downloader, chat, schedule m
 
 Web Store readiness, on top of the v2 stack: icons, four real-UI screenshots (`docs/store/`), first-run consent gate (every page plus the service worker), `docs/PRIVACY.md`, permission justifications and the Cornell-only host decision in `docs/STORE_LISTING.md`. **Not done (Gavin's):** policy hosting URL, contact email, developer account, submit. **Unverified:** a real-account run of the zip; Chrome's own review.
 
+## T-464 status (branch `products/v2-2-review-fixes`, PR #11 on top of #10)
+
+Fixes Anvil's T-461 review of #1-#9 (review-canvas-stack-1-9.md):
+- **P1 course folders.** A course's folder name is bound to its Canvas id (`files/dirs.ts`, `archiveDirs:<layout>` in chrome.storage.local) and fixed at the first run that writes it, so selecting only the second of two same-named courses no longer aims it at the first one's folder. `folderManifestStore.load` throws `ForeignCourseError` when the folder's manifest names another course; the runner fails that course's items with a plain message and still archives the others. Old two-course folders made before this: select both courses in one run once and they match again. A course renamed in Canvas keeps its folder.
+- **P2 feed batches.** Ingest runs stage bytes under `_staged/<batch>/<path>`; the batch entry keeps `path` (destination) and adds `stage`. `tools/hq-ingest` reads `stage` when present (confined to `_staged/<batch>/<same path>`), and prunes emptied staging folders. Batches written by the older extension still ingest. The contract text in `knowledge/courses/README.md` (gavin-data) should mention the optional `stage` field; I did not edit it.
+- **P2 tokens.** The GitHub token and Anthropic key are removed from storage when their feature is turned off or the field is emptied (also on load, for leftovers from earlier versions). Durable storage while the feature is on is the accepted exception; `docs/PRIVACY.md` now says so.
+- Not covered: a crash after files are staged but before the batch is written leaves unlisted staged files (reported as strays by ingest) that the manifest already counts as saved.
+
 ## Slice 1 — Gradescope due dates (in review)
 
 - Reads `/account` (course list, term headings) and `/courses/:id` (assignment table) with the signed-in session. Regex parser because the MV3 service worker has no `DOMParser`.

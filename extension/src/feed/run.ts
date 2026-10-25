@@ -8,6 +8,7 @@
 import { fetchCourseSources } from "@/src/files/api";
 import { INBOX_KEY, loadRoot, rootAccess } from "@/src/files/handle-store";
 import { ingestLayout } from "@/src/files/layout";
+import { loadDirBindings, rememberDirBindings } from "@/src/files/dirs";
 import { planCourses } from "@/src/files/plan";
 import { runArchive } from "@/src/files/runner";
 import { folderSink, storageManifestStore } from "@/src/files/sinks";
@@ -36,7 +37,8 @@ export async function runFeed(courses: Course[], signal?: AbortSignal): Promise<
   try {
     const inputs = [];
     for (const course of active) inputs.push({ course, sources: await fetchCourseSources(course.id) });
-    const plans = planCourses(inputs, ingestLayout);
+    const plans = planCourses(inputs, ingestLayout, await loadDirBindings(ingestLayout.id));
+    await rememberDirBindings(ingestLayout.id, plans);
     const result = await runArchive(plans, ingestLayout, folderSink(inbox), storageManifestStore(), { signal });
     return finish(result.failed === 0, describeResult(result));
   } catch (error) {

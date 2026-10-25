@@ -237,17 +237,49 @@ export function planCourse(
   return { courseId: course.id, folder, dir, items, skipped };
 }
 
+/** Course folder names already handed out, by Canvas course id. Persisted between runs (`dirs.ts`). */
+export type DirBindings = Record<number, string>;
+
+/**
+ * A course keeps the folder it was first given, whatever else is selected
+ * later: names are tied to the immutable Canvas course id, never to this
+ * run's selection. A course with no binding takes its natural name, or the
+ * next ` (2)` / `-2` that no other course (selected or not) holds. Case-insensitive.
+ */
+export function allocateCourseNames(
+  courses: Pick<Course, "id" | "name" | "courseCode">[],
+  layout: Layout,
+  bound: DirBindings = {},
+): string[] {
+  const taken = new Set(Object.values(bound).map((name) => name.toLowerCase()));
+  return courses.map((course) => {
+    const existing = bound[course.id];
+    if (existing !== undefined) return existing;
+    const base = layout.courseName(course);
+    let name = base;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = layout.numberedCourseName(base, n);
+    taken.add(name.toLowerCase());
+    return name;
+  });
+}
+
 /**
  * Plan several courses. Two courses that would share a folder name (a re-run
- * section, a code reused across terms) get ` (2)` rather than merging.
+ * section, a code reused across terms) get ` (2)` rather than merging, and
+ * `bound` keeps each course in the folder it already has.
  */
 export function planCourses(
   inputs: { course: Pick<Course, "id" | "name" | "courseCode">; sources: CourseSources }[],
   layout: Layout = archiveLayout,
+  bound: DirBindings = {},
 ): CoursePlan[] {
-  const names = layout.uniqueCourseNames(inputs.map(({ course }) => layout.courseName(course)));
-  return inputs.map(({ course, sources }, i) => planCourse(course, sources, layout, names[i]));
+  const names = allocateCourseNames(inputs.map(({ course }) => course), layout, bound);
+  return inputs.map(({ course, sources }, i) => planCourse(course, sources, layout, names[i] as string));
 }
+
+/** The bindings a set of plans used, to be remembered before they write anything. */
+export const bindingsOf = (plans: CoursePlan[]): DirBindings =>
+  Object.fromEntries(plans.map((plan) => [plan.courseId, plan.folder]));
 
 export interface PlanSummary {
   courses: number;

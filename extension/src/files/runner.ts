@@ -17,6 +17,7 @@ import {
   buildBatch,
   decide,
   emptyManifest,
+  ForeignCourseError,
   type CourseManifest,
   type Decision,
   type ManifestEntry,
@@ -86,14 +87,29 @@ export async function runArchive(
 ): Promise<RunResult> {
   const started = Date.now();
   const keep = store !== null && sink.keepsRecords;
+  const batchAt = now();
+
+  // Ingest: every run stages its bytes under its own folder, so a later run can never
+  // overwrite what an earlier, not-yet-ingested batch still points at.
+  const stageDir = layout.id === "ingest" && sink.keepsRecords ? ["_staged", batchFileName(batchAt).replace(/\.json$/, "")] : null;
 
   const manifests = new Map<number, CourseManifest>();
-  for (const plan of plans) {
-    manifests.set(plan.courseId, keep ? await store.load(plan) : emptyManifest(plan.courseId));
-  }
-
-  const queue = plans.flatMap((plan) => plan.items.map((item) => ({ plan, item })));
   const outcomes: ItemOutcome[] = [];
+  const refused = new Set<number>();
+  for (const plan of plans) {
+    try {
+      manifests.set(plan.courseId, keep ? await store.load(plan) : emptyManifest(plan.courseId));
+    } catch (error) {
+      if (!(error instanceof ForeignCourseError)) throw error;
+      // This folder is another course's: refuse this course, carry on with the rest.
+      refused.add(plan.courseId);
+      for (const item of plan.items) outcomes.push({ source: item.source, path: item.path, status: "failed", message: error.message });
+    }
+  }
+  const active = plans.filter((plan) => !refused.has(plan.courseId));
+  const refusedItems = outcomes.length;
+
+  const queue = active.flatMap((plan) => plan.items.map((item) => ({ plan, item })));
   const saved: SavedRecord[] = [];
   let next = 0;
   let sinceCheckpoint = 0;
@@ -101,7 +117,7 @@ export async function runArchive(
 
   const persist = async () => {
     if (!keep) return;
-    for (const plan of plans) await store.save(plan, manifests.get(plan.courseId) as CourseManifest);
+    for (const plan of active) await store.save(plan, manifests.get(plan.courseId) as CourseManifest);
   };
 
   const checkpoint = () => {
@@ -120,7 +136,8 @@ export async function runArchive(
       if (decision === "unchanged") return { source: item.source, path: item.path, status: "unchanged" };
 
       const prior = manifest.entries[item.source];
-      const result = await sink.save(item, decision === "revalidate" ? prior : undefined);
+      const stage = stageDir ? [...stageDir, ...item.path] : null;
+      const result = await sink.save(stage ? { ...item, path: stage } : item, decision === "revalidate" ? prior : undefined);
 
       // Revalidated: the host said 304, or the bytes written hash the same as the saved ones.
       const same =
@@ -147,6 +164,7 @@ export async function runArchive(
         size: result.size,
         sha256: result.sha256,
         modifiedAt: item.modifiedAt,
+        ...(stage ? { stage: stage.join("/") } : {}),
       });
       return { source: item.source, path: item.path, status: "saved", decision: decision === "revalidate" ? "changed" : decision };
     } catch (error) {
@@ -166,7 +184,7 @@ export async function runArchive(
         sinceCheckpoint = 0;
         await checkpoint();
       }
-      onProgress?.(outcomes.length, queue.length, outcome);
+      onProgress?.(outcomes.length - refusedItems, queue.length, outcome);
     }
   };
 
@@ -177,10 +195,9 @@ export async function runArchive(
   // The ingest batch goes last: its presence tells HQ every listed file is on disk.
   let batch: string | null = null;
   if (layout.id === "ingest" && sink.keepsRecords && saved.length > 0) {
-    const at = now();
-    const courses = Object.fromEntries(plans.map((plan) => [plan.folder, plan.courseId]));
-    const name = batchFileName(at);
-    await sink.writeText(["_batches", name], `${JSON.stringify(buildBatch(at, saved, courses), null, 2)}\n`);
+    const courses = Object.fromEntries(active.map((plan) => [plan.folder, plan.courseId]));
+    const name = batchFileName(batchAt);
+    await sink.writeText(["_batches", name], `${JSON.stringify(buildBatch(batchAt, saved, courses), null, 2)}\n`);
     batch = name;
   }
 

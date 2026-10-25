@@ -35,7 +35,31 @@ export function emptyManifest(courseId: number): CourseManifest {
   return { version: 1, courseId, entries: {} };
 }
 
-/** A missing, corrupt or foreign manifest means "nothing saved yet", never a crash. */
+/** The folder's manifest names a different Canvas course than the one about to be written into it. */
+export class ForeignCourseError extends Error {
+  constructor(
+    readonly folder: string,
+    readonly ownerId: number,
+  ) {
+    super(
+      `${folder} already holds another course's archive (Canvas course ${ownerId}); nothing was written there. Select the other course in the same run once so each keeps its own folder, or move that folder aside.`,
+    );
+    this.name = "ForeignCourseError";
+  }
+}
+
+/** The Canvas course id a manifest file says it belongs to, or null when it is missing, unreadable or not a manifest. */
+export function manifestOwner(text: string | null): number | null {
+  if (!text) return null;
+  try {
+    const data = JSON.parse(text) as Partial<CourseManifest>;
+    return data.version === 1 && typeof data.courseId === "number" && typeof data.entries === "object" ? data.courseId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A missing or corrupt manifest means "nothing saved yet", never a crash. A manifest for another course is refused by the folder store (`ForeignCourseError`), not reset. */
 export function parseManifest(text: string | null, courseId: number): CourseManifest {
   if (!text) return emptyManifest(courseId);
   try {
@@ -95,6 +119,8 @@ export interface SavedRecord {
   size: number;
   sha256: string | null;
   modifiedAt: string | null;
+  /** Inbox-relative place the bytes were staged at (ingest layout), when it differs from `path`. */
+  stage?: string;
 }
 
 /**
@@ -113,6 +139,8 @@ export interface Batch {
     canvasModifiedAt: string | null;
     size: number;
     sha256: string | null;
+    /** Where the bytes sit in the inbox when that is not `path` (each batch stages its own copy). */
+    stage?: string;
   }[];
 }
 
@@ -127,6 +155,7 @@ export function buildBatch(createdAt: Date, saved: SavedRecord[], courses: Recor
       canvasModifiedAt: s.modifiedAt,
       size: s.size,
       sha256: s.sha256,
+      ...(s.stage ? { stage: s.stage } : {}),
     })),
   };
 }

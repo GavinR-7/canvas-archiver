@@ -22,16 +22,26 @@ export const DEFAULT_AI: AiSettings = { enabled: false, apiKey: "", allowContent
 
 const KEY = "ai.settings";
 
+/**
+ * The key is kept (in chrome.storage.local, documented in PRIVACY.md) only while the
+ * feature is on. Turning it off, or clearing the field, removes it from storage.
+ */
+export const withRetention = (settings: AiSettings): AiSettings =>
+  settings.enabled && settings.apiKey ? settings : { ...settings, apiKey: "" };
+
 export async function loadAi(): Promise<AiSettings> {
   try {
     const stored = (await chrome.storage.local.get(KEY))[KEY] as Partial<AiSettings> | undefined;
-    return { enabled: stored?.enabled === true, apiKey: typeof stored?.apiKey === "string" ? stored.apiKey : "", allowContent: stored?.allowContent === true };
+    const settings = { enabled: stored?.enabled === true, apiKey: typeof stored?.apiKey === "string" ? stored.apiKey : "", allowContent: stored?.allowContent === true };
+    // A key left by an earlier version while the feature was off goes now, not at the next save.
+    if (settings.apiKey && !settings.enabled) await chrome.storage.local.set({ [KEY]: withRetention(settings) });
+    return withRetention(settings);
   } catch {
     return DEFAULT_AI;
   }
 }
 
-export const saveAi = (settings: AiSettings) => chrome.storage.local.set({ [KEY]: settings });
+export const saveAi = (settings: AiSettings) => chrome.storage.local.set({ [KEY]: withRetention(settings) });
 
 export interface ModelContext {
   request: string;

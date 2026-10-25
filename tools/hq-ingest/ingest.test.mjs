@@ -71,6 +71,36 @@ test("changed content keeps the old version as .v1 and marks updated", () => {
   assert.match(index, /updated: 2026-10-15/);
 });
 
+test("two staged batches for one path both land, in order, and the staging folders are cleaned (T-461 stranded batch)", () => {
+  const { root, inbox } = setup();
+  const staged = (name, content) => {
+    const stage = `_staged/${name}/ece3030/files/a.txt`;
+    drop(inbox, stage, content);
+    const entry = { course: "ece3030", path: "ece3030/files/a.txt", stage, source: "canvas:file/9", canvasModifiedAt: null, size: content.length, sha256: sha(content) };
+    writeFileSync(path.join(inbox, "_batches", `${name}.json`), JSON.stringify({ createdAt: "2026-10-24T00:00:00Z", courses: { ece3030: 1 }, files: [entry] }));
+  };
+  staged("2026-10-24T020000", "one");
+  staged("2026-10-25T020000", "two"); // the nightly ingest missed a night
+  const r = ingest({ inbox, root, today: "2026-10-25" });
+  assert.equal(r.courses.ece3030.failed ?? 0, 0);
+  assert.deepEqual(r.kept, []);
+  assert.equal(readFileSync(path.join(root, "ece3030/files/a.txt"), "utf8"), "two");
+  assert.equal(readFileSync(path.join(root, "ece3030/files/a.txt.v1"), "utf8"), "one");
+  assert.equal(existsSync(path.join(inbox, "_staged")), false);
+});
+
+test("a stage that is not this entry's own _staged copy is refused", () => {
+  const { root, inbox } = setup();
+  drop(inbox, "ece3030/files/other.txt", "x");
+  writeFileSync(path.join(inbox, "_batches", "a.json"), JSON.stringify({
+    createdAt: "t", courses: {},
+    files: [{ course: "ece3030", path: "ece3030/files/a.txt", stage: "ece3030/files/other.txt", source: "canvas:file/1", size: 1, sha256: sha("x") }],
+  }));
+  const r = ingest({ inbox, root, today: "2026-10-25" });
+  assert.deepEqual(r.kept, ["a.json"]);
+  assert.equal(existsSync(path.join(root, "ece3030/files/a.txt")), false);
+});
+
 test("hash mismatch fails, keeps file and batch in the inbox", () => {
   const { root, inbox } = setup();
   drop(inbox, "ece3030/files/a.txt", "tampered");
