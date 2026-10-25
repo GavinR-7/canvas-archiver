@@ -9,6 +9,7 @@ import type { CanvasUser, Course, Task } from "@/src/types/canvas";
 import { getAll, getOne } from "./client";
 import { AccessDeniedError, NotFoundError } from "./errors";
 import { normalizeCourse, normalizePlannerItem, normalizeUser } from "./normalize";
+import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
 import { termSortKey } from "./terms";
 
@@ -59,15 +60,15 @@ export async function fetchUpcomingTasks(
   courses: Course[],
   days: number = UPCOMING_DAYS,
   now: Date = new Date(),
+  overdueDays = 0,
 ): Promise<Task[]> {
-  const end = new Date(now);
-  end.setDate(end.getDate() + days);
+  const window = taskWindow(now, days, overdueDays);
 
   let raw: Record<string, unknown>[];
   try {
     raw = await getAll<Record<string, unknown>>("/planner/items", {
-      start_date: now.toISOString(),
-      end_date: end.toISOString(),
+      start_date: new Date(window.from).toISOString(),
+      end_date: new Date(window.to).toISOString(),
     });
   } catch (error) {
     // A course with the feature disabled must not take the whole view down.
@@ -84,10 +85,6 @@ export async function fetchUpcomingTasks(
     .filter((task): task is Task => task !== null)
     // The planner respects its own window, but an item whose due date was
     // nudged after the fact can still arrive outside it.
-    .filter((task) => {
-      if (!task.dueAt) return false;
-      const due = new Date(task.dueAt).getTime();
-      return due >= now.getTime() && due <= end.getTime();
-    })
+    .filter((task) => inTaskWindow(task.dueAt, window))
     .sort(byDueDate);
 }

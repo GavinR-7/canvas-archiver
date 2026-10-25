@@ -11,6 +11,7 @@
 import { SessionExpiredError, CanvasError } from "@/src/canvas/errors";
 import { currentTermCode, termSortKey } from "@/src/canvas/terms";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
 import type { Task } from "@/src/types/canvas";
 import { assertCanvasOrigin } from "@/src/canvas/url-guard";
@@ -68,6 +69,7 @@ export function currentCourses(courses: GradescopeCourse[], now: Date): Gradesco
 export async function fetchGradescopeTasks(
   days: number,
   now: Date = new Date(),
+  overdueDays = 0,
 ): Promise<Task[]> {
   const { html } = await getHtml("/account");
   const courses = parseCourses(html);
@@ -78,7 +80,7 @@ export async function fetchGradescopeTasks(
     throw new GradescopeSessionExpiredError();
   }
 
-  const end = now.getTime() + days * 24 * 60 * 60 * 1000;
+  const window = taskWindow(now, days, overdueDays);
   const tasks: Task[] = [];
 
   for (const course of currentCourses(courses, now)) {
@@ -87,11 +89,7 @@ export async function fetchGradescopeTasks(
   }
 
   return tasks
-    .filter((task) => {
-      if (!task.dueAt) return false;
-      const due = new Date(task.dueAt).getTime();
-      return due >= now.getTime() && due <= end;
-    })
+    .filter((task) => inTaskWindow(task.dueAt, window))
     .sort(byDueDate);
 }
 

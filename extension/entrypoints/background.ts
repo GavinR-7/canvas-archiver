@@ -22,7 +22,6 @@ import {
   fetchActiveCourses,
   fetchUpcomingTasks,
   fetchUser,
-  UPCOMING_DAYS,
 } from "@/src/canvas/api";
 import { CanvasError, SessionExpiredError } from "@/src/canvas/errors";
 import {
@@ -40,6 +39,7 @@ import { syncDue } from "@/src/sync/run";
 import { loadClasses } from "@/src/schedule/model";
 import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
 import { hasConsent } from "@/src/consent/consent";
+import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS } from "@/src/lib/task-window";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -75,10 +75,11 @@ function describeError(error: unknown, service = "Canvas"): SnapshotError {
 /** Fetch everything from Canvas and cache it. */
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
+  const now = new Date();
 
   // Gradescope runs alongside Canvas and fails independently. Its tasks from
   // the previous fetch are kept on failure so a flaky page doesn't blank them.
-  const gradescope = fetchGradescopeTasks(UPCOMING_DAYS).then(
+  const gradescope = fetchGradescopeTasks(DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
     (tasks) => ({ tasks, error: null as SnapshotError | null }),
     (error: unknown) => {
       console.warn("[canvas-archiver] gradescope refresh failed", error);
@@ -93,17 +94,19 @@ async function refresh(): Promise<Snapshot> {
     // Courses first: tasks are labelled with their course name, so the lookup
     // has to exist before planner items are normalised.
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
-    const tasks = await fetchUpcomingTasks(courses);
+    const tasks = await fetchUpcomingTasks(courses, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS);
 
     // Dates written in prose (syllabus, Ed announcements) are best-effort: each
     // fails alone, and its previous result is kept rather than blanking.
     const current = courses.filter((c) => !c.restricted);
-    const syllabus = await fetchSyllabusTasks(current, UPCOMING_DAYS).catch((error: unknown) => {
+    let syllabusError: SnapshotError | null = null;
+    const syllabus = await fetchSyllabusTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown) => {
       console.warn("[canvas-archiver] syllabus dates failed", error);
+      syllabusError = describeError(error, "Canvas syllabus");
       return previous.tasks.filter((task) => task.source === "syllabus");
     });
     let edError: SnapshotError | null = null;
-    const ed = await fetchEdTasks(current, UPCOMING_DAYS).catch((error: unknown) => {
+    const ed = await fetchEdTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown) => {
       console.warn("[canvas-archiver] ed refresh failed", error);
       edError = describeError(error, "Ed Discussion");
       return previous.tasks.filter((task) => task.source === "ed");
@@ -118,6 +121,7 @@ async function refresh(): Promise<Snapshot> {
       error: null,
       gradescopeError: gs.error,
       edError,
+      syllabusError,
     };
     await saveSnapshot(snapshot);
     return snapshot;

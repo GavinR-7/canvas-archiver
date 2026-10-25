@@ -54,6 +54,8 @@ export interface Snapshot {
   gradescopeError: SnapshotError | null;
   /** Same for Ed Discussion. Absent in snapshots cached before Ed existed. */
   edError?: SnapshotError | null;
+  /** Failed syllabus read; used to keep an incomplete empty export from erasing deadlines. */
+  syllabusError?: SnapshotError | null;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {

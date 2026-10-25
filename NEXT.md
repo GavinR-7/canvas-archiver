@@ -65,6 +65,23 @@ Built: Course chat page (popup → "Course chat…"). `src/chat/retrieve.ts` (ch
 - Needs `https://edstem.org/*` (and `us.edstem.org` / the region host Cornell uses; check).
 - Done when: unread staff posts from the last 7 days show per course; build and tests green.
 
+## Scheduler follow-up: complete deadline window (codex/scheduler-due-window)
+
+The scheduler cache and source reads now cover the due.json contract: seven
+rolling days overdue through sixty days ahead, from one shared refresh clock.
+Upcoming remains a fourteen-day view; the weekly schedule can use the broader
+cache. Exports normalize timestamps to UTC milliseconds and compare timezone
+as part of idempotence. Healthy empty refreshes clear removed deadlines;
+incomplete empty refreshes preserve the remote file. Syllabus failures are
+recorded so they cannot masquerade as an authoritative empty result. Partial
+nonempty refreshes retain the existing per-source cache behavior.
+
+Offline tests cover all four source adapters, inclusive bounds across DST,
+worker wiring, empty/failing refreshes, stable timestamps and the Upcoming
+filter. Unverified: the live source APIs and parsers already listed above.
+Still next: Canvas calendar events and verified Ed/Gradescope captures; this
+change does not claim to discover deadlines that the current adapters omit.
+
 ## Slice 3 — Due-date sync to gavin-data
 
 - Every 2 hours (`chrome.alarms`), write `due.json` (all `Task`s due in the window, normalized, no titles of private notes) to the `gavin-data` repo through the GitHub contents API (`PUT /repos/.../contents/due.json`).

@@ -105,7 +105,7 @@ export function matchCourse(ed: EdCourse, courses: Course[]): Course | null {
   return courses.find((c) => c.courseCode && haystack.includes(courseKey(c.courseCode))) ?? null;
 }
 
-export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date()): Promise<Task[]> {
+export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date(), overdueDays = 1): Promise<Task[]> {
   const edCourses = normalizeEdCourses(await getJson("/api/user"));
   const tasks: Task[] = [];
   for (const ed of edCourses) {
@@ -114,7 +114,7 @@ export async function fetchEdTasks(courses: Course[], windowDays: number, now: D
     const threads = normalizeEdThreads(await getJson(`/api/courses/${ed.id}/threads?limit=50&sort=new`));
     for (const thread of threads.filter(worthReading)) {
       const url = `https://edstem.org/us/courses/${ed.id}/discussion/${thread.number ?? thread.id}`;
-      tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays));
+      tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays, overdueDays));
     }
   }
   return tasks;

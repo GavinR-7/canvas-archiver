@@ -21,13 +21,20 @@ export async function syncDue(
     await saveStatus({ at: now.toISOString(), ok: false, message: problem });
     return { status: "failed", message: problem };
   }
-  // Nothing fetched yet (or Canvas failed with an empty cache): never overwrite a good file with an empty one.
-  if (!snapshot.fetchedAt || snapshot.tasks.length === 0) {
+  // Nothing fetched yet: absence of a cache is not an authoritative empty result.
+  if (!snapshot.fetchedAt) {
     const outcome: SyncOutcome = { status: "failed", message: "No deadlines loaded yet; sync skipped." };
     await saveStatus({ at: now.toISOString(), ok: false, message: outcome.message });
     return outcome;
   }
   const file = buildDueFile(snapshot.tasks, now);
+  // Healthy empty refreshes must clear removed deadlines. A partial refresh
+  // cannot prove that nothing is due, even when its cached tasks aged out.
+  if (file.items.length === 0 && (snapshot.error || snapshot.gradescopeError || snapshot.edError || snapshot.syllabusError)) {
+    const message = "Some deadline sources did not refresh; empty sync skipped to keep existing deadlines.";
+    await saveStatus({ at: now.toISOString(), ok: false, message });
+    return { status: "failed", message };
+  }
   const outcome = await putFile(settings, serialize(file), (existing) => sameContent(existing, file), `chore: update ${settings.path} (${file.items.length} deadlines)`, doFetch);
   // Classes go in the same pass, only when the person has entered some.
   let scheduleNote = "";

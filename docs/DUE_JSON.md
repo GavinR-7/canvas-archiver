@@ -25,13 +25,16 @@ Written by the Canvas Archiver extension to the GitHub repo the person chooses i
 }
 ```
 
-- Window: from 7 days ago (so overdue work can be flagged) to 60 days ahead. Sorted by `dueAt`.
+- Window: from 7 days ago (so overdue work can be flagged) to 60 days ahead, inclusive at both ends. These are rolling 24-hour days measured from the refresh clock, including across DST. Canvas, Gradescope, syllabus and Ed reads use this same window; Upcoming separately displays only the next 14 days.
+- Timestamps are exported as canonical UTC ISO strings with milliseconds. Sorted by `dueAt`, then `id`; equivalent offsets serialize identically.
 - `done`: submitted, graded or excused. List as done, not as a deadline.
 - `unconfirmed`: read out of prose (syllabus, Ed announcement), not a Canvas/Gradescope date. A plan should say "per the syllabus".
 - `allDay` with no stated time means `dueAt` is 11:59 PM Eastern that day.
 - `dueDay` is the Eastern calendar day, so a reader never converts UTC.
 - Duplicates across sources are already merged (priority Canvas > Gradescope > Ed > syllabus).
 - Contains no grades, scores, files or course content.
+- A successful empty refresh writes `items: []`, clearing removed/completed-window deadlines instead of leaving an old file forever. If any source failed and the export would be empty (including after cached tasks age out), the write is skipped and Settings reports the reason. With nonempty data, fresh sources and retained cached tasks still sync independently. `generatedAt` is the export time, not proof that every source refreshed successfully.
+- Idempotence ignores `generatedAt`, but compares the version, timezone and normalized item list.
 
 Token: fine-grained, one repository, Contents read and write. Stored in the extension's local storage only.
 
