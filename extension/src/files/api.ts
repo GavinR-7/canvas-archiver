@@ -5,7 +5,7 @@
 
 import { getAll, getOne } from "@/src/canvas/client";
 import { AccessDeniedError, NotFoundError } from "@/src/canvas/errors";
-import { attachmentIds } from "./attachments";
+import { attachmentIds, imageOnlyIds } from "./attachments";
 import type { CanvasDocument, CanvasFile, CanvasFolder, CanvasModule, CourseSources } from "./plan";
 
 type Raw = Record<string, unknown>;
@@ -102,6 +102,7 @@ export function normalizeAssignment(raw: Raw): CanvasDocument | null {
     modifiedAt: str(raw["updated_at"]),
     htmlUrl: str(raw["html_url"]),
     attachmentIds: attachmentIds(raw["attachments"], str(raw["description"]) ?? ""),
+    imageOnlyIds: imageOnlyIds(raw["attachments"], str(raw["description"]) ?? ""),
   };
 }
 
@@ -116,6 +117,7 @@ export function normalizeAnnouncement(raw: Raw): CanvasDocument | null {
     modifiedAt: str(raw["posted_at"]) ?? str(raw["created_at"]),
     htmlUrl: str(raw["html_url"]),
     attachmentIds: attachmentIds(raw["attachments"], str(raw["message"]) ?? ""),
+    imageOnlyIds: imageOnlyIds(raw["attachments"], str(raw["message"]) ?? ""),
   };
 }
 
@@ -130,6 +132,7 @@ export function normalizeDiscussion(raw: Raw): CanvasDocument | null {
     modifiedAt: str(raw["last_reply_at"]) ?? str(raw["posted_at"]) ?? str(raw["created_at"]),
     htmlUrl: str(raw["html_url"]),
     attachmentIds: attachmentIds(raw["attachments"], str(raw["message"]) ?? ""),
+    imageOnlyIds: imageOnlyIds(raw["attachments"], str(raw["message"]) ?? ""),
   };
 }
 
@@ -144,6 +147,7 @@ export function normalizePage(raw: Raw): CanvasDocument | null {
     modifiedAt: str(raw["updated_at"]),
     htmlUrl: str(raw["html_url"]),
     attachmentIds: attachmentIds(null, str(raw["body"]) ?? ""),
+    imageOnlyIds: imageOnlyIds(null, str(raw["body"]) ?? ""),
   };
 }
 
@@ -158,6 +162,7 @@ export function normalizeSyllabus(courseId: number, raw: Raw): CanvasDocument | 
     modifiedAt: null,
     htmlUrl: null,
     attachmentIds: attachmentIds(null, body),
+    imageOnlyIds: imageOnlyIds(null, body),
   };
 }
 

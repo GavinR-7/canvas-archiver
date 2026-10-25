@@ -89,6 +89,21 @@ export function attachmentIds(attachments: unknown, html: string): number[] {
   return ids;
 }
 
+/**
+ * Ids a document shows only as embedded Canvas images: not in its `attachments` array and not linked. These are
+ * fetched under a stricter rule than a file the instructor attached (Canvas origin only, see transfer.ts).
+ */
+export function imageOnlyIds(attachments: unknown, html: string, canvasOrigin: string = DEFAULT_CANVAS_ORIGIN): number[] {
+  const named = new Set<number>(fileIdsIn(html));
+  if (Array.isArray(attachments)) {
+    for (const entry of attachments) {
+      const id = (entry as Record<string, unknown> | null)?.["id"];
+      if (typeof id === "number") named.add(id);
+    }
+  }
+  return imageIdsIn(html, canvasOrigin).filter((id) => !named.has(id));
+}
+
 /** Relative link from the directory `from` to the file at `to` (both path segments), URL-encoded. */
 export function relativeLink(from: string[], to: string[]): string {
   let shared = 0;
