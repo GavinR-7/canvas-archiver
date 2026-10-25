@@ -134,6 +134,13 @@ export default function App() {
           >
             Save course files…
           </button>
+          <button
+            type="button"
+            onClick={() => void chrome.runtime.openOptionsPage()}
+            className="mt-2 w-full text-center text-xs text-zinc-500 underline underline-offset-2 hover:no-underline"
+          >
+            Settings (send deadlines to HQ)
+          </button>
         </>
       )}
     </div>
