@@ -13,7 +13,7 @@
  */
 
 import type { Course } from "@/src/types/canvas";
-import { courseFolderName, ROOT_FOLDER, sanitizeFilename, sanitizeSegment, slugify, uniqueNames } from "./paths";
+import { courseFolderName, ROOT_FOLDER, sanitizeFilename, sanitizeSegment, slugify } from "./paths";
 import type { CanvasDocument, CanvasModule } from "./plan";
 
 export interface Layout {
@@ -23,7 +23,8 @@ export interface Layout {
   /** Needs the folder sink (hashes, text files). Not available through chrome.downloads. */
   needsFolder: boolean;
   courseName(course: Pick<Course, "name" | "courseCode">): string;
-  uniqueCourseNames(names: string[]): string[];
+  /** The `n`th (n >= 2) alternative to a course folder name that is already taken. */
+  numberedCourseName(name: string, n: number): string;
   courseDir(courseName: string): string[];
   moduleDir(courseDir: string[], module: Pick<CanvasModule, "name" | "position">): string[];
   looseDir(courseDir: string[], canvasFolders: string[]): string[];
@@ -44,7 +45,7 @@ export const archiveLayout: Layout = {
   verifyDisk: true,
   needsFolder: false,
   courseName: courseFolderName,
-  uniqueCourseNames: uniqueNames,
+  numberedCourseName: (name, n) => `${name} (${n})`,
   courseDir: (name) => [ROOT_FOLDER, name],
   moduleDir: (dir, module) => [...dir, sanitizeSegment(`${pad(module.position)} ${module.name}`, `${pad(module.position)} Module`)],
   looseDir: (dir, folders) => [...dir, "Course files", ...folders],
@@ -72,7 +73,7 @@ export const ingestLayout: Layout = {
   verifyDisk: false,
   needsFolder: true,
   courseName: (course) => ingestCourseSlug(course),
-  uniqueCourseNames: (names) => uniqueNames(names).map((n) => n.replace(/ \((\d+)\)$/, "-$1")),
+  numberedCourseName: (name, n) => `${name}-${n}`,
   courseDir: (slug) => [slug],
   moduleDir: (dir, module) => [...dir, `${pad(module.position)}-${slugify(module.name, "module")}`],
   looseDir: (dir) => [...dir, "files"],

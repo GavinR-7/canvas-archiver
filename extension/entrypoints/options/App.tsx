@@ -10,10 +10,10 @@
 import { revokeConsent } from "@/src/consent/consent";
 import { useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, validate, type SyncSettings } from "@/src/sync/github";
-import { DEFAULT_AI, loadAi, saveAi, type AiSettings } from "@/src/ai/model";
+import { DEFAULT_AI, loadAi, saveAi, withRetention as withAiRetention, type AiSettings } from "@/src/ai/model";
 import { INBOX_KEY, loadRoot, pickRoot, requestRootAccess, rootAccess, saveRoot, type RootAccess } from "@/src/files/handle-store";
 import { DEFAULT_FEED, loadFeed, loadFeedStatus, saveFeed, type FeedSettings, type FeedStatus } from "@/src/feed/settings";
-import { loadSettings, loadStatus, saveSettings, type SyncStatus } from "@/src/sync/settings";
+import { loadSettings, loadStatus, saveSettings, withRetention, type SyncStatus } from "@/src/sync/settings";
 
 const GITHUB = ["https://api.github.com/*"];
 const input = "mt-1 w-full rounded border border-zinc-300 bg-transparent px-2 py-1 text-sm dark:border-zinc-600";
@@ -43,8 +43,8 @@ export default function App() {
       if (!granted) return setAiNote("Chrome did not grant access to api.anthropic.com, so this stays off.");
     }
     await saveAi({ ...next, apiKey: next.apiKey.trim() });
-    setAi({ ...next, apiKey: next.apiKey.trim() });
-    setAiNote(next.enabled ? "Saved." : "Off.");
+    setAi(withAiRetention({ ...next, apiKey: next.apiKey.trim() }));
+    setAiNote(next.enabled ? "Saved." : "Off. The key was removed from this browser.");
   };
 
   useEffect(() => {
@@ -94,8 +94,8 @@ export default function App() {
       if (!granted) return setNote("Chrome did not grant access to GitHub, so sync stays off.");
     }
     await saveSettings(next);
-    setSettings(next);
-    setNote(next.enabled ? "Saved. Sync runs about every 2 hours while Chrome is open." : "Saved. Sync is off.");
+    setSettings(withRetention(next));
+    setNote(next.enabled ? "Saved. Sync runs about every 2 hours while Chrome is open." : "Saved. Sync is off and the token was removed from this browser.");
   };
 
   const syncNow = async () => {

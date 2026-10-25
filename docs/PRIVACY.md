@@ -21,6 +21,7 @@ It is read-only. It never submits, edits or deletes anything on those sites. It 
   - *Due-date sync to GitHub:* a file listing your upcoming deadlines (course, title, due time, link, done or not) is written to the GitHub repository you name, using a token you create and enter. Nothing else is sent.
   - *File picking:* file and folder names are sent to the AI provider (Anthropic) using your own API key.
   - *Course chat:* asked **per course** and off for every course until you tick that course's box. Only then are the few passages found for your question sent to Anthropic using your own API key. The key is stored only on your device. The provider's own terms govern what it does with that text; we never see it.
+- **Tokens and keys, retention:** the GitHub token and the Anthropic API key you enter are stored on your device in the extension's local storage (not synced, not sent anywhere except to GitHub or Anthropic respectively) for as long as the feature that uses them is on. Turning the feature off, or clearing the field, deletes the token or key from storage. They are tokens you can revoke, not passwords.
 - **Never:** no analytics or telemetry, no advertising, no sale or transfer of your data, no human reads your data, no use for anything except showing it to you.
 
 ## Your controls

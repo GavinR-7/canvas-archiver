@@ -389,10 +389,10 @@ describe("runArchive", () => {
     const { sink, disk } = memorySink();
     const store = memoryStore();
     const at = new Date("2026-10-15T14:03:09Z");
-    const run = () => runArchive(plansFor(sources, ingestLayout), ingestLayout, sink, store, { now: () => at });
+    const run = () => runArchive(plansFor(sources, ingestLayout), ingestLayout, sink, store, { now: () => at, runId: "aabbccdd" });
     const first = await run();
-    expect(first.batch).toBe("2026-10-15T140309.json");
-    const batch = JSON.parse(disk.get("_batches/2026-10-15T140309.json") as string);
+    expect(first.batch).toBe("2026-10-15T140309-aabbccdd.json");
+    const batch = JSON.parse(disk.get("_batches/2026-10-15T140309-aabbccdd.json") as string);
     expect(batch.courses).toEqual({ ece3140: 7 });
     expect(batch.files.map((f: { source: string }) => f.source).sort()).toEqual(["canvas:file/1", "canvas:file/2", "canvas:page/p"]);
     expect(batch.files[0].path.startsWith("ece3140/")).toBe(true);

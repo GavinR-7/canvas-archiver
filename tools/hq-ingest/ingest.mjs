@@ -55,6 +55,13 @@ export function destination(rel) {
   return { course, relPath: [dir, ...rest].join("/") };
 }
 
+/** `_staged/<batch>/<path>` for the same `path`; anything else (or anything that could escape the inbox) is refused. */
+export function stagedLocation(stage, rel) {
+  const parts = stage.split("/");
+  if (parts.length < 4 || parts[0] !== "_staged" || parts.some((p) => p === "" || p === "." || p === ".." || p.includes("\\"))) return null;
+  return parts.slice(2).join("/") === rel ? stage : null;
+}
+
 function stripHtml(html) {
   return html
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, "")
@@ -143,12 +150,19 @@ export function ingest({ inbox, root, dryRun = false, today = todayISO() }) {
         allLanded = false;
         continue;
       }
-      listed.add(path.resolve(path.join(inbox, entry.path)));
+      // `stage`: this batch's own copy of the bytes (`_staged/<batch>/<path>`), so a later
+      // batch for the same path cannot overwrite it. Absent: the bytes sit at `path`.
+      const staged = typeof entry.stage === "string" ? stagedLocation(entry.stage, entry.path) : null;
+      if (typeof entry.stage === "string" && !staged) {
+        report.unknownCourses.push(String(entry.stage));
+        allLanded = false;
+        continue;
+      }
+      const from = path.join(inbox, staged ?? entry.path);
+      listed.add(path.resolve(from));
       const courseDir = path.join(root, course);
       if (!existsSync(courseDir)) { report.unknownCourses.push(entry.path); allLanded = false; continue; }
 
-      const from = path.join(inbox, entry.path);
-      listed.add(path.resolve(from));
       const ledgerFile = path.join(courseDir, "ledger.json");
       const ledger = readJson(ledgerFile, {});
       const prior = ledger[entry.source];
@@ -219,6 +233,17 @@ export function ingest({ inbox, root, dryRun = false, today = todayISO() }) {
     if (allLanded && !dryRun) rmSync(path.join(batchDir, name), { force: true });
     else if (!allLanded) report.kept.push(name);
   }
+
+  // Staging folders of batches that landed are empty now; remove them (never a folder that still holds a file).
+  const prune = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const n of readdirSync(dir)) {
+      const p = path.join(dir, n);
+      if (statSync(p).isDirectory()) prune(p);
+    }
+    if (!dryRun && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+  };
+  prune(path.join(inbox, "_staged"));
 
   // Files in the inbox that no batch lists are ignored and reported (contract).
   const walk = (dir) => {
