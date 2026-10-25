@@ -101,7 +101,11 @@ export interface PlannedItem {
   session?: "gradescope";
   /** An embedded image nothing else names: fetched only from the Canvas origin, never via the downloader (see transfer.ts). */
   imageOnly?: boolean;
+  /** What kind of thing it is, so a run can say what changed ("3 attachments, 2 images") instead of one lump. */
+  role?: ItemRole;
 }
+
+export type ItemRole = "file" | "page" | "attachment" | "image" | "handout";
 
 export type SkipReason = "locked" | "no-url" | "unavailable";
 
@@ -183,6 +187,7 @@ export function planCourse(
         url: file.url,
         content: null,
         ...(imageOnly.has(file.id) ? { imageOnly: true } : {}),
+        role: imageOnly.has(file.id) ? "image" : original ? "attachment" : "file",
       }),
     });
   };
@@ -230,6 +235,7 @@ export function planCourse(
         url: ext.url,
         content: null,
         session: ext.system,
+        role: "handout",
       }),
     });
   }
@@ -256,6 +262,7 @@ export function planCourse(
           modifiedAt: doc.modifiedAt,
           url: null,
           content,
+          role: "page",
         };
       },
     });

@@ -77,6 +77,15 @@ function describeError(error: unknown, service = "Canvas"): SnapshotError {
   return { kind: "other", message: String(error) };
 }
 
+/**
+ * A signed-out service is an expected state the snapshot already reports ("sign in to Gradescope"); logging it as a
+ * warning put it in chrome://extensions' error list on every sync. Only a failure nobody asked for is a warning.
+ */
+function logFailure(what: string, error: unknown) {
+  if (error instanceof SessionExpiredError) console.debug(`[canvas-archiver] ${what}: ${error.message}`);
+  else console.warn(`[canvas-archiver] ${what}`, error);
+}
+
 /** Fetch everything from Canvas and cache it. */
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
@@ -88,7 +97,7 @@ async function refresh(): Promise<Snapshot> {
   const gradescope = fetchGradescopeTasks(EXAM_DAYS).then(
     (tasks) => ({ tasks, error: null as SnapshotError | null }),
     (error: unknown) => {
-      console.warn("[canvas-archiver] gradescope refresh failed", error);
+      logFailure("gradescope refresh failed", error);
       return {
         tasks: previousAll.filter((task) => task.source === "gradescope"),
         error: describeError(error, "Gradescope"),
@@ -125,7 +134,7 @@ async function refresh(): Promise<Snapshot> {
         return result.tasks;
       })
       .catch((error: unknown) => {
-        console.warn("[canvas-archiver] ed refresh failed", error);
+        logFailure("ed refresh failed", error);
         edError = describeError(error, "Ed Discussion");
         return previousAll.filter((task) => task.source === "ed");
       });
@@ -147,7 +156,7 @@ async function refresh(): Promise<Snapshot> {
     await saveSnapshot(snapshot);
     return snapshot;
   } catch (error) {
-    console.warn("[canvas-archiver] refresh failed", error);
+    logFailure("refresh failed", error);
     // Keep whatever was cached and attach the error, so the UI can show stale
     // data with a warning rather than going blank.
     const gs = await gradescope;
