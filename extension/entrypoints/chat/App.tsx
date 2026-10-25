@@ -14,6 +14,7 @@ import { complete, loadAi, MODEL } from "@/src/ai/model";
 import { fetchCourseSources } from "@/src/files/api";
 import { archiveLayout } from "@/src/files/layout";
 import { planCourse } from "@/src/files/plan";
+import { chatMode, findPassages, type FoundPassage } from "@/src/chat/find";
 import { buildUser, citationsIn, SYSTEM, type Citation } from "@/src/chat/prompt";
 import { buildIndex, chunkDoc, search, type Chunk, type Hit, type Index } from "@/src/chat/retrieve";
 import { ShowAllCourses } from "@/src/ui/components";
@@ -25,6 +26,8 @@ interface Turn {
   answer: string;
   cited: Citation[];
   invalid: number[];
+  /** Set for "Find (no AI)" turns: the passages themselves, with their citations. */
+  found?: FoundPassage[];
 }
 
 const button =
@@ -90,8 +93,10 @@ export default function App() {
     setNote(null);
     try {
       const ai = await loadAi();
-      if (!ai.enabled || !ai.apiKey || !ai.allowContent) {
-        setNote("Turn on the AI key and \"send passages of course text\" in Settings first. Nothing is sent until you do.");
+      if (chatMode(ai) === "find") {
+        const found = findPassages(index.index, text, courseLabel);
+        setTurns((t) => [...t, { question: text, answer: found.length === 0 ? "Not in the course files." : "", cited: [], invalid: [], found }]);
+        setQuestion("");
         return;
       }
       const hits: Hit[] = search(index.index, text, 8);
@@ -117,8 +122,9 @@ export default function App() {
       <h1 className="text-xl font-semibold">Course chat</h1>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
         Ask about a course or ask for a review guide. Answers come only from the course's own text and cite where they found it.
-        Only the few passages found for each question are sent to Anthropic, with your key, model {MODEL}. Pages, assignments,
-        announcements and the syllabus are searched; PDFs and slides are not read yet.
+        With your own key (Settings), only the few passages found for each question are sent to Anthropic, model {MODEL}. Pages, assignments,
+        announcements and the syllabus are searched; PDFs and slides are not read yet. Without a key it runs as Find (no AI):
+        the best matching passages with their citations, dates in bold, and nothing sent anywhere.
       </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
@@ -175,7 +181,20 @@ export default function App() {
         {[...turns].reverse().map((t, i) => (
           <article key={turns.length - i} className="text-sm">
             <p className="font-medium">{t.question}</p>
+            {t.found && <p className="mt-0.5 text-xs text-zinc-500">Find (no AI)</p>}
             <p className="mt-1 whitespace-pre-wrap">{t.answer}</p>
+            {t.found && t.found.length > 0 && (
+              <ol className="mt-2 space-y-3">
+                {t.found.map((f) => (
+                  <li key={f.n}>
+                    <p className="whitespace-pre-wrap">
+                      {f.segments.map((seg, k) => (seg.date ? <strong key={k}>{seg.text}</strong> : <span key={k}>{seg.text}</span>))}
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500">[{f.n}] {f.label}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
             {t.cited.length > 0 && (
               <ul className="mt-2 text-xs text-zinc-500">
                 {t.cited.map((c) => <li key={c.n}>[{c.n}] {c.label}</li>)}
