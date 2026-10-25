@@ -8,6 +8,7 @@
  * opened from disk should never run code just because an instructor pasted it.
  */
 
+import { rewriteFileLinks } from "./attachments";
 import type { CanvasDocument } from "./plan";
 
 const escapeHtml = (text: string) =>
@@ -20,7 +21,8 @@ export function stripActiveContent(html: string): string {
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
 }
 
-export function renderDocument(doc: CanvasDocument): string {
+/** `links` maps a Canvas file id to the relative path it was saved at; those links in the body are rewritten. */
+export function renderDocument(doc: CanvasDocument, links: ReadonlyMap<number, string> = new Map()): string {
   const meta = [
     `Source: canvas:${doc.kind}/${doc.key}`,
     doc.modifiedAt ? `Modified: ${doc.modifiedAt}` : null,
@@ -39,7 +41,7 @@ export function renderDocument(doc: CanvasDocument): string {
 <body>
 <h1>${escapeHtml(doc.title)}</h1>
 <p><small>${meta}</small></p>
-${stripActiveContent(doc.html)}
+${rewriteFileLinks(stripActiveContent(doc.html), links)}
 </body>
 </html>
 `;

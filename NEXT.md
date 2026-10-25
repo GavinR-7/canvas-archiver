@@ -136,3 +136,13 @@ Built: `docs/SETUP.md` (feed folder `C:\Users\gavin\hq-course-inbox`, Ed note, d
 - Course chat without an AI key now returns the best matching passages with citations and bolded dates ("Find (no AI)"); the BYO-key AI mode is unchanged and optional.
 - Course browser (`browse.html`, popup button "Browse a class's files…"): click a class, folders and files with size and date, tick, "Download ticked". It plans with the archive layout and runs the incremental engine on the ticked subset, so saved-and-unchanged files are skipped and marked "saved". Ticks are remembered per course.
 - Next: Gradescope handouts in the browser tree, a search box over file names, and a "tick everything new" shortcut.
+
+## T-508: attachments saved beside their pages (PR `products/v2-9-attachments`, base v2-8-course-browser)
+
+Gap: the archive saved assignment, syllabus and announcement pages as HTML stubs that named their files (Homework7-1.pdf) but downloaded none; the archive on disk had no Modules or Course files folder at all, so the Files list and module files were coming back empty too.
+- Every file a page, assignment, announcement, discussion (new) or the syllabus links (`/files/<id>` in an `<a>` href or data-api-endpoint) or lists in its API `attachments` is now a planned download, saved in the page's own folder under the name the instructor gave it (display name, not Canvas's `+` filename), tracked in the manifest by `canvas:file/<id>` like any file (skipped while modified time is unchanged), and the saved page's link is rewritten to the relative path (the Canvas address stays in `data-canvas-href`).
+- A file in a module stays in the module (pages link across, `../01 Week 1/x.pdf`); a file named by several pages is saved once, beside the first.
+- Files the Files list did not return (Files tab hidden from students) but a module or page names are now fetched by id (`/courses/<c>/files/<id>`, then `/files/<id>`); ones Canvas refuses are counted as skipped "unavailable" and their link is left as the Canvas address.
+- Attachments are plan items, so the course browser (#20) lists them next to their page, tickable.
+- Request cost: one extra paged list per course (`discussion_topics`) plus one GET per distinct linked file not already in the Files list. Embedded images (`<img>`) are not downloaded. Same host, GET only, no new permission.
+- The nightly feed uses the same planner, so it now carries attachments too (ingest layout: same `files/` or `_syllabus/` folder as the page).
