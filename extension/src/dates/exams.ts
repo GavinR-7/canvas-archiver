@@ -36,7 +36,14 @@ export function inWindow(task: Task, now: Date, days: number): boolean {
   if (!task.dueAt) return false;
   const due = new Date(task.dueAt).getTime();
   const grace = task.source === "syllabus" || task.source === "ed" ? DAY_MS : 0;
-  return due >= now.getTime() - grace && due <= now.getTime() + days * DAY_MS;
+  return due >= now.getTime() - grace && due <= windowEnd(now, days).getTime();
+}
+
+/** `days` ahead by local calendar days, like the Canvas reader's end date, so a DST change does not move the cutoff by an hour. */
+export function windowEnd(now: Date, days: number): Date {
+  const end = new Date(now);
+  end.setDate(end.getDate() + days);
+  return end;
 }
 
 export interface CourseExams {
