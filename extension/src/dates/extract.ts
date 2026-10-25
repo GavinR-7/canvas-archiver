@@ -110,6 +110,26 @@ function cleanTitle(line: string, removals: string[]): string {
   return title;
 }
 
+const SENTENCE_WORD = /\b(is|are|was|were|will|must|may|can|should|be|no|not|closed|open|book|policy|due|submit|submitted|homework|hw|assignment|project|lab|problem|set|quiz|reading)\b/i;
+
+/** A line that is only an exam label ("Prelim 1", "Final Exam", "Midterm 2 (in class)"), not a sentence about exams. */
+function isExamLabel(line: string): boolean {
+  const words = line.replace(/[|•·–—\-:,;()]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  return words.length <= 5 && !SENTENCE_WORD.test(line);
+}
+
+/** A dated line that only gives the date and time ("Thursday, October 8, 7:30 PM", "Oct 8 · Statler 196"), with no other subject. */
+function isDateContinuation(line: string): boolean {
+  if (SENTENCE_WORD.test(line)) return false;
+  const rest = line
+    .replace(WRITTEN_DATE, " ")
+    .replace(NUMERIC_DATE, " ")
+    .replace(/\b(mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat|sun)(?:day)?\b\.?/gi, " ")
+    .replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?\b/gi, " ")
+    .replace(/[|•·–—\-:,;()]+/g, " ");
+  return rest.trim().split(/\s+/).filter(Boolean).length <= 5;
+}
+
 /** Candidates in `html`. Dates in the past are included; callers decide the window. */
 export function extractExamDates(html: string, now: Date): DateCandidate[] {
   const found: DateCandidate[] = [];
@@ -122,7 +142,7 @@ export function extractExamDates(html: string, now: Date): DateCandidate[] {
     // PDF text often puts the date on the next line ("Prelim 1" / "Thursday, October 8, 7:30 PM").
     // Join it only when this line has no date and the next has one but no exam word of its own.
     const next = lines[index + 1];
-    if (next && line.length <= 60 && !WRITTEN_DATE.test(line) && !NUMERIC_DATE.test(line) && !KEYWORD.test(next) && (WRITTEN_DATE.test(next) || NUMERIC_DATE.test(next))) {
+    if (next && isExamLabel(line) && isDateContinuation(next) && !WRITTEN_DATE.test(line) && !NUMERIC_DATE.test(line) && !KEYWORD.test(next) && (WRITTEN_DATE.test(next) || NUMERIC_DATE.test(next))) {
       line = `${line} ${next}`;
     }
     // "Exams are closed-book" is a policy sentence, not a date.
