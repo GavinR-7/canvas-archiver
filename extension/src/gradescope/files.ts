@@ -28,8 +28,6 @@ export interface GradescopeFile {
   filename: string;
   /** Absolute URL on the Gradescope origin. Needs the session cookie; never log it. */
   url: string;
-  /** Path without query: what the manifest compares to notice a replaced handout. */
-  fingerprint: string;
 }
 
 const ENTITY_AMP = /&amp;/g;
@@ -108,7 +106,6 @@ export function parseHandouts(
       assignmentTitle,
       filename: fileName,
       url: `${GRADESCOPE_ORIGIN}${path}`,
-      fingerprint: path,
     });
   }
 
@@ -159,8 +156,9 @@ export async function listGradescopeFiles(
   courses: GradescopeCourse[],
   getPage: PageGetter,
   signal?: AbortSignal,
+  /** Filled as pages arrive, so a caller that gives up early still has what was read. */
+  listing: GradescopeListing = { courses: [], errors: [] },
 ): Promise<GradescopeListing> {
-  const listing: GradescopeListing = { courses: [], errors: [] };
 
   for (const course of courses) {
     if (signal?.aborted) break;
@@ -195,7 +193,6 @@ const toExternal = (file: GradescopeFile): ExternalFile => ({
   system: "gradescope",
   filename: file.filename,
   url: file.url,
-  fingerprint: file.fingerprint,
 });
 
 /**

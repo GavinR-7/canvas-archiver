@@ -19,6 +19,7 @@ import {
   emptyManifest,
   type CourseManifest,
   type Decision,
+  type ManifestEntry,
   type SavedRecord,
 } from "./manifest";
 import type { Layout } from "./layout";
@@ -28,13 +29,17 @@ export interface SaveResult {
   size: number;
   /** Null when the sink cannot hash what it wrote. */
   sha256: string | null;
+  /** The host's ETag / Last-Modified for this response, if it sent one. */
+  validator?: string | null;
+  /** The host answered 304 to a conditional request: nothing was written, the saved file stands. */
+  notModified?: boolean;
 }
 
 export interface FileSink {
   /** Size of the file at `path`, or null if absent. Sinks that cannot look return null. */
   size(path: string[]): Promise<number | null>;
   /** Write one item (fetching `item.url`, or writing `item.content`). */
-  save(item: PlannedItem): Promise<SaveResult>;
+  save(item: PlannedItem, prior?: ManifestEntry): Promise<SaveResult>;
   readText(path: string[]): Promise<string | null>;
   writeText(path: string[], text: string): Promise<void>;
   /** False for sinks that cannot read back or hash (the Downloads fallback). */
@@ -48,7 +53,7 @@ export interface ManifestStore {
 }
 
 export type ItemOutcome =
-  | { source: string; path: string[]; status: "saved"; decision: Exclude<Decision, "unchanged"> }
+  | { source: string; path: string[]; status: "saved"; decision: Exclude<Decision, "unchanged" | "revalidate"> }
   | { source: string; path: string[]; status: "unchanged" }
   | { source: string; path: string[]; status: "failed"; message: string };
 
@@ -114,14 +119,26 @@ export async function runArchive(
       const decision = keep ? decide(item, manifest.entries[item.source], onDisk) : "new";
       if (decision === "unchanged") return { source: item.source, path: item.path, status: "unchanged" };
 
-      const result = await sink.save(item);
+      const prior = manifest.entries[item.source];
+      const result = await sink.save(item, decision === "revalidate" ? prior : undefined);
+
+      // Revalidated: the host said 304, or the bytes written hash the same as the saved ones.
+      const same =
+        decision === "revalidate" &&
+        prior !== undefined &&
+        (result.notModified === true || (result.sha256 !== null && result.sha256 === prior.sha256));
+      if (same) {
+        manifest.entries[item.source] = { ...prior, validator: result.validator ?? prior.validator ?? null };
+        return { source: item.source, path: item.path, status: "unchanged" };
+      }
+
       manifest.entries[item.source] = {
         path: item.path,
         size: result.size,
         sha256: result.sha256,
         modifiedAt: item.modifiedAt,
         savedAt: now().toISOString(),
-        ...(item.fingerprint !== undefined ? { fingerprint: item.fingerprint } : {}),
+        ...(result.validator !== undefined ? { validator: result.validator } : {}),
       };
       saved.push({
         course: plan.folder,
@@ -131,7 +148,7 @@ export async function runArchive(
         sha256: result.sha256,
         modifiedAt: item.modifiedAt,
       });
-      return { source: item.source, path: item.path, status: "saved", decision };
+      return { source: item.source, path: item.path, status: "saved", decision: decision === "revalidate" ? "changed" : decision };
     } catch (error) {
       // Messages must not carry the signed URL; sinks throw their own text.
       const message = error instanceof Error ? error.message : String(error);

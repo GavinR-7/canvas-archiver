@@ -67,8 +67,6 @@ export interface ExternalFile {
   system: "gradescope";
   filename: string;
   url: string;
-  /** What identifies this version of the file; the manifest skips it while this is unchanged. */
-  fingerprint: string;
 }
 
 export interface CourseSources {
@@ -94,8 +92,6 @@ export interface PlannedItem {
   content: string | null;
   /** Download needs this system's session cookie (and only that host). Absent means Canvas's signed URL, no cookies. */
   session?: "gradescope";
-  /** Version marker for downloads whose host gives no modified time; see `decide`. */
-  fingerprint?: string;
 }
 
 export type SkipReason = "locked" | "no-url";
@@ -200,7 +196,6 @@ export function planCourse(
         url: ext.url,
         content: null,
         session: ext.system,
-        fingerprint: ext.fingerprint,
       }),
     });
   }

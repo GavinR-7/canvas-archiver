@@ -15,8 +15,12 @@ export interface ManifestEntry {
   /** Canvas's modified time at save. Null for items Canvas gives no timestamp (syllabus). */
   modifiedAt: string | null;
   savedAt: string;
-  /** Version marker for items whose host gives no modified time (Gradescope). */
-  fingerprint?: string;
+  /**
+   * The host's ETag (or Last-Modified) at save, for items from a host that gives
+   * no modified time up front (Gradescope). Sent back as If-None-Match /
+   * If-Modified-Since so an unchanged file costs a 304. Absent: re-fetch and compare the hash.
+   */
+  validator?: string | null;
 }
 
 export interface CourseManifest {
@@ -45,7 +49,8 @@ export function parseManifest(text: string | null, courseId: number): CourseMani
   }
 }
 
-export type Decision = "new" | "changed" | "unchanged";
+/** "revalidate": ask the host (conditional GET, else full GET + hash compare); the runner decides from the answer. */
+export type Decision = "new" | "changed" | "unchanged" | "revalidate";
 
 const encoder = new TextEncoder();
 
@@ -73,8 +78,9 @@ export function decide(
   if (entry.path.join("/") !== item.path.join("/")) return "changed";
   if (onDiskSize !== undefined && onDiskSize !== entry.size) return onDiskSize === null ? "new" : "changed";
   if (item.content !== null) return entry.sha256 === hashText(item.content) ? "unchanged" : "changed";
-  // Gradescope reports neither size nor time before download: the URL path is the version.
-  if (item.fingerprint !== undefined) return entry.fingerprint === item.fingerprint ? "unchanged" : "changed";
+  // Gradescope gives no size or time up front, and a URL is not a version (an instructor can
+  // replace a handout in place), so only the host can say whether it changed.
+  if (item.session !== undefined) return "revalidate";
   // The size Canvas reports and the bytes written can differ (encodings, CDN), so
   // size only decides when Canvas gave no modified time.
   if (item.modifiedAt !== null) return entry.modifiedAt === item.modifiedAt ? "unchanged" : "changed";

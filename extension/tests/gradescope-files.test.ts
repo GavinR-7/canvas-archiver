@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchGradescopeFiles } from "@/src/gradescope/api";
+import { conditionalHeaders, validatorOf } from "@/src/files/sinks";
 import { listGradescopeFiles, matchCanvasCourse, parseHandouts, withGradescope } from "@/src/gradescope/files";
 import { parseCourses } from "@/src/gradescope/parse";
 import { archiveLayout, ingestLayout } from "@/src/files/layout";
-import { decide, type ManifestEntry } from "@/src/files/manifest";
+import { decide, hashText, type CourseManifest, type ManifestEntry } from "@/src/files/manifest";
 import { planCourses, type CourseSources, type PlannedItem } from "@/src/files/plan";
 import { runArchive, type FileSink, type ManifestStore } from "@/src/files/runner";
 import { emptyManifest } from "@/src/files/manifest";
@@ -28,9 +30,8 @@ describe("parseHandouts", () => {
     expect(urls).not.toMatch(/submissions|5550002|evil|review_grades/);
   });
 
-  it("gives stable source ids and fingerprints", () => {
+  it("gives stable source ids", () => {
     expect(files[0]?.source).toBe("gradescope:file/5550001/assignments_5550001_files_Project%201%20Spec.pdf");
-    expect(files[0]?.fingerprint).toBe("/courses/900001/assignments/5550001/files/Project%201%20Spec.pdf");
   });
 
   it("returns nothing for a page with no handouts, junk or empty input", () => {
@@ -155,58 +156,156 @@ describe("manifest decision for Gradescope items", () => {
     url: "https://www.gradescope.com/courses/1/assignments/1/files/a.pdf",
     content: null,
     session: "gradescope",
-    fingerprint: "/courses/1/assignments/1/files/a.pdf",
   };
-  const entry: ManifestEntry = { path: item.path, size: 52341, sha256: null, modifiedAt: null, savedAt: "t", fingerprint: item.fingerprint };
+  const entry: ManifestEntry = { path: item.path, size: 52341, sha256: "aa", modifiedAt: null, savedAt: "t", validator: 'etag:"v1"' };
 
-  it("skips a saved file whose fingerprint is unchanged, whatever its byte size", () => {
-    expect(decide(item, entry)).toBe("unchanged");
+  it("never trusts the URL as a version: a known file is revalidated with the host", () => {
+    expect(decide(item, entry)).toBe("revalidate");
   });
 
-  it("re-fetches when the URL path changes, the file moves, or it is new", () => {
-    expect(decide({ ...item, fingerprint: "/courses/1/assignments/1/files/b.pdf" }, entry)).toBe("changed");
+  it("re-files a moved file, fetches a new one, and re-fetches a file deleted from disk", () => {
     expect(decide({ ...item, path: ["x", "a.pdf"] }, entry)).toBe("changed");
     expect(decide(item, undefined)).toBe("new");
+    expect(decide(item, entry, null)).toBe("new");
   });
 });
 
-describe("runArchive with Gradescope items", () => {
-  it("saves once, then skips on the second run, and a failed item does not stop the others", async () => {
-    const merged = withGradescope([], {
-      courses: [{ course: parseCourses(ACCOUNT_PAGE)[0]!, files: parseHandouts(ASSIGNMENT_WITH_HANDOUTS, 900001, 5550001, "P1") }],
-      errors: [],
-    });
-    const plans = planCourses(merged, archiveLayout);
-    const saved: string[] = [];
-    let failedOnce = false;
+describe("validators", () => {
+  it("prefers ETag, then Last-Modified, and does not trust Content-Length alone", () => {
+    const h = (o: Record<string, string>) => ({ get: (k: string) => o[k.toLowerCase()] ?? null });
+    expect(validatorOf(h({ etag: '"v1"', "last-modified": "x" }))).toBe('etag:"v1"');
+    expect(validatorOf(h({ "last-modified": "Wed, 21 Oct 2026 07:28:00 GMT" }))).toBe("lm:Wed, 21 Oct 2026 07:28:00 GMT");
+    expect(validatorOf(h({ "content-length": "10" }))).toBeNull();
+  });
+
+  it("turns a saved validator into the matching conditional header", () => {
+    expect(conditionalHeaders('etag:"v1"')).toEqual({ "If-None-Match": '"v1"' });
+    expect(conditionalHeaders("lm:Wed")).toEqual({ "If-Modified-Since": "Wed" });
+    expect(conditionalHeaders(null)).toEqual({});
+    expect(conditionalHeaders(undefined)).toEqual({});
+  });
+});
+
+describe("a handout replaced in place at the same URL", () => {
+  const listing = {
+    courses: [{ course: parseCourses(ACCOUNT_PAGE)[0]!, files: parseHandouts(ASSIGNMENT_WITH_HANDOUTS, 900001, 5550001, "P1").slice(0, 1) }],
+    errors: [],
+  };
+  const trusting = { ...archiveLayout, verifyDisk: false };
+
+  /** A host whose file at one URL can change; the sink answers like the folder sink does. */
+  function host() {
+    const state = { body: "v1", etag: '"e1"', sends: [] as (string | undefined)[], useEtag: true };
     const sink: FileSink = {
       keepsRecords: true,
       size: async () => null,
       readText: async () => null,
       writeText: async () => undefined,
-      save: async (item) => {
-        if (item.path.at(-1) === "Starter handout.pdf" && !failedOnce) {
-          failedOnce = true;
-          throw new Error("Gradescope answered 500");
+      save: async (_item, prior) => {
+        state.sends.push(prior?.validator ?? undefined);
+        const validator = state.useEtag ? `etag:${state.etag}` : null;
+        if (state.useEtag && prior?.validator === validator) {
+          return { size: prior.size, sha256: prior.sha256, validator: prior.validator, notModified: true };
         }
-        saved.push(item.source);
-        return { size: 10, sha256: "h" };
+        return { size: state.body.length, sha256: hashText(state.body), validator };
       },
     };
-    const store: Record<number, ReturnType<typeof emptyManifest>> = {};
+    return { state, sink };
+  }
+
+  async function runTwice(configure: (s: ReturnType<typeof host>["state"]) => void) {
+    const { state, sink } = host();
+    const plans = planCourses(withGradescope([], listing), archiveLayout);
+    const store: Record<number, CourseManifest> = {};
     const manifests: ManifestStore = {
-      load: async (plan) => store[plan.courseId] ?? emptyManifest(plan.courseId),
-      save: async (plan, m) => void (store[plan.courseId] = m),
+      load: async (p) => store[p.courseId] ?? emptyManifest(p.courseId),
+      save: async (p, m) => void (store[p.courseId] = m),
     };
-
-    // verifyDisk is on for the archive layout and the stub reports "absent" as null, so use a layout that trusts the manifest
-    const trusting = { ...archiveLayout, verifyDisk: false };
     const first = await runArchive(plans, trusting, sink, manifests);
-    expect([first.saved, first.failed]).toEqual([1, 1]);
-
+    configure(state);
     const second = await runArchive(plans, trusting, sink, manifests);
-    expect([second.saved, second.unchanged, second.failed]).toEqual([1, 1, 0]);
-    const third = await runArchive(plans, trusting, sink, manifests);
-    expect([third.saved, third.unchanged]).toEqual([0, 2]);
+    return { first, second, state };
+  }
+
+  it("is re-downloaded when the host's ETag changed", async () => {
+    const { first, second, state } = await runTwice((s) => {
+      s.body = "v2 new content";
+      s.etag = '"e2"';
+    });
+    expect(first.saved).toBe(1);
+    expect(second).toMatchObject({ saved: 1, unchanged: 0 });
+    expect(state.sends).toEqual([undefined, 'etag:"e1"']); // the second run asked conditionally
+  });
+
+  it("costs a 304 and writes nothing when the ETag is unchanged", async () => {
+    const { second } = await runTwice(() => undefined);
+    expect(second).toMatchObject({ saved: 0, unchanged: 1 });
+  });
+
+  it("with no validator from the host, re-fetches and compares the hash: changed bytes are saved", async () => {
+    const { second } = await runTwice((s) => {
+      s.useEtag = false;
+      s.body = "v2 new content";
+    });
+    expect(second).toMatchObject({ saved: 1, unchanged: 0 });
+  });
+
+  it("with no validator and identical bytes, reports unchanged", async () => {
+    const { second } = await runTwice((s) => {
+      s.useEtag = false;
+    });
+    expect(second).toMatchObject({ saved: 0, unchanged: 1 });
+  });
+});
+
+describe("fetchGradescopeFiles is bounded", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const page = (html: string) => new Response(html, { status: 200 });
+
+  it("returns after the budget when the first request never settles (and ignores the abort)", async () => {
+    vi.stubGlobal("fetch", () => new Promise(() => undefined));
+    const started = Date.now();
+    const listing = await fetchGradescopeFiles(new Date("2026-10-01"), undefined, 80);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(listing.courses).toEqual([]);
+    expect(listing.errors.join(" ")).toMatch(/did not answer/);
+  });
+
+  it("aborts the in-flight request at the budget when fetch honours the signal", async () => {
+    let aborted = false;
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      }),
+    );
+    const listing = await fetchGradescopeFiles(new Date("2026-10-01"), undefined, 80);
+    expect(aborted).toBe(true);
+    expect(listing.errors.length).toBeGreaterThan(0);
+  });
+
+  it("keeps what it read before a later page hangs", async () => {
+    vi.stubGlobal("fetch", (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === "/account") return Promise.resolve(page(ACCOUNT_PAGE));
+      if (path === "/courses/900001") return Promise.resolve(page(COURSE_PAGE));
+      return new Promise(() => undefined);
+    });
+    const listing = await fetchGradescopeFiles(new Date("2026-10-01"), undefined, 150);
+    expect(listing.errors.join(" ")).toMatch(/did not answer/);
+    expect(listing.courses).toEqual([]); // the course being read is dropped whole, not half-listed
+  });
+
+  it("passes a request timeout signal to every Gradescope fetch", async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      seen.push(init.signal ?? undefined);
+      return Promise.resolve(page("<html>Log In</html>"));
+    });
+    await fetchGradescopeFiles(new Date("2026-10-01"));
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((s) => s !== undefined)).toBe(true);
   });
 });

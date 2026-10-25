@@ -69,10 +69,11 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
       }
     },
 
-    async save(item) {
+    async save(item, prior) {
       const hash = new Sha256();
       let size = 0;
       let body: ReadableStream<Uint8Array>;
+      let validator: string | null | undefined;
 
       if (item.content !== null) {
         const bytes = encoder.encode(item.content);
@@ -88,7 +89,7 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
           response = await fetch(
             item.url as string,
             item.session === "gradescope"
-              ? { method: "GET", credentials: "include", redirect: "follow" }
+              ? { method: "GET", credentials: "include", redirect: "follow", headers: conditionalHeaders(prior?.validator) }
               : { credentials: "omit", redirect: "follow" },
           );
         } catch {
@@ -97,6 +98,10 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
         }
         if (item.session === "gradescope" && response.redirected && /\/(login|saml)\b/.test(new URL(response.url).pathname)) {
           throw new Error("Gradescope session expired: sign in to Gradescope and run again");
+        }
+        if (item.session === "gradescope") {
+          if (response.status === 304 && prior) return { size: prior.size, sha256: prior.sha256, validator: prior.validator, notModified: true };
+          validator = validatorOf(response.headers);
         }
         if (!response.ok || !response.body) {
           throw new Error(`${item.session === "gradescope" ? "Gradescope" : "Canvas"} answered ${response.status}`);
@@ -126,9 +131,24 @@ export function folderSink(root: FileSystemDirectoryHandle): FileSink {
         await writable.abort().catch(() => undefined);
         throw error;
       }
-      return { size, sha256: hash.digest() };
+      return { size, sha256: hash.digest(), ...(validator !== undefined ? { validator } : {}) };
     },
   };
+}
+
+/** `etag:"abc"` / `lm:Wed, 21 Oct 2026 07:28:00 GMT`; null when the host sent neither. Content-Length alone is not trusted: a replaced file can keep its length. */
+export function validatorOf(headers: Pick<Headers, "get">): string | null {
+  const etag = headers.get("etag");
+  if (etag) return `etag:${etag}`;
+  const modified = headers.get("last-modified");
+  return modified ? `lm:${modified}` : null;
+}
+
+/** The request headers that turn a GET into a conditional GET, from a saved validator. */
+export function conditionalHeaders(validator: string | null | undefined): Record<string, string> {
+  if (validator?.startsWith("etag:")) return { "If-None-Match": validator.slice(5) };
+  if (validator?.startsWith("lm:")) return { "If-Modified-Since": validator.slice(3) };
+  return {};
 }
 
 // --- Fallback sink: chrome.downloads, under Downloads/ -------------------
