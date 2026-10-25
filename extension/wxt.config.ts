@@ -19,7 +19,7 @@ export default defineConfig({
   manifest: {
     name: "Canvas Archiver",
     description:
-      "See everything due across your Canvas courses. Local-first: no account, no backend, nothing leaves your browser.",
+      "See everything due across your Canvas courses. Local-first: no account, no backend, and by default nothing leaves your browser.",
     // `storage` is the only capability API needed so far. Note what is absent:
     // no `tabs`, no `<all_urls>`, no `webRequest`.
     // `downloads` is used only by the "Save to Downloads instead" fallback.

@@ -39,6 +39,7 @@ import { loadSettings } from "@/src/sync/settings";
 import { syncDue } from "@/src/sync/run";
 import { loadClasses } from "@/src/schedule/model";
 import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
+import { hasConsent } from "@/src/consent/consent";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -137,9 +138,15 @@ async function refresh(): Promise<Snapshot> {
   }
 }
 
+/** No request leaves the browser before the person accepts the first-run disclosure. */
+async function refreshWithConsent(): Promise<Snapshot> {
+  if (!(await hasConsent())) return EMPTY_SNAPSHOT;
+  return refresh();
+}
+
 /** Refresh, collapsing concurrent callers onto one set of requests. */
 function refreshOnce(): Promise<Snapshot> {
-  inFlight ??= refresh().finally(() => {
+  inFlight ??= refreshWithConsent().finally(() => {
     inFlight = null;
   });
   return inFlight;
@@ -174,11 +181,12 @@ async function scheduleFeed() {
 
 /** The run needs a page (folder handle, long loop), so open one without taking focus. */
 async function startFeed() {
-  if (!(await loadFeed()).enabled) return;
+  if (!(await hasConsent()) || !(await loadFeed()).enabled) return;
   await chrome.tabs.create({ url: chrome.runtime.getURL("files.html?auto=feed"), active: false });
 }
 
 async function refreshAndSync(): Promise<Snapshot> {
+  if (!(await hasConsent())) return EMPTY_SNAPSHOT;
   const snapshot = await refreshOnce();
   await syncDue(snapshot, await loadSettings(), new Date(), fetch, await loadClasses()).catch((error: unknown) => {
     console.warn("[canvas-archiver] due.json sync failed", error);
@@ -196,6 +204,10 @@ export default defineBackground(() => {
     if (!existing) void chrome.alarms.create(REFRESH_ALARM, { delayInMinutes: 1, periodInMinutes: REFRESH_EVERY_MINUTES });
   });
   void scheduleFeed();
+  // First run: open a page that shows the disclosure (every page is gated).
+  chrome.runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === "install") void chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") });
+  });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes["feed.settings"]) void scheduleFeed();
   });

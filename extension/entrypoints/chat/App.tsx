@@ -8,7 +8,8 @@
  * announcements, syllabus); PDFs and slides are not read yet, and the page says so.
  */
 
-import { useMemo, useState } from "react";
+import { CHAT_OPT_IN_TEXT, isAllowed, loadAllowed, setCourseAllowed } from "@/src/chat/optin";
+import { useEffect, useMemo, useState } from "react";
 import { complete, loadAi, MODEL } from "@/src/ai/model";
 import { fetchCourseSources } from "@/src/files/api";
 import { archiveLayout } from "@/src/files/layout";
@@ -37,6 +38,14 @@ export default function App() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [allowed, setAllowed] = useState<number[]>([]);
+  useEffect(() => { void loadAllowed().then(setAllowed); }, []);
+  const courseAllowed = course ? isAllowed(allowed, course.id) : false;
+  const allow = async (on: boolean) => {
+    if (!course) return;
+    await setCourseAllowed(course.id, on);
+    setAllowed(await loadAllowed());
+  };
   const courseLabel = course ? course.courseCode || course.name : "";
 
   const exams = useMemo(
@@ -69,6 +78,10 @@ export default function App() {
 
   const ask = async (text: string) => {
     if (!course || !index || index.courseId !== course.id || !text.trim()) return;
+    if (!isAllowed(await loadAllowed(), course.id)) {
+      setNote("Allow this course for chat first. Nothing is sent until you do.");
+      return;
+    }
     setBusy(true);
     setNote(null);
     try {
@@ -119,6 +132,15 @@ export default function App() {
           <span className="self-center text-xs text-zinc-500">{index.index.chunks.length} passages from {index.docs} pages; {index.files} files not read</span>
         )}
       </div>
+
+      {course && (
+        <label className="mt-3 flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-1" checked={courseAllowed} onChange={(e) => void allow(e.target.checked)} />
+          <span>
+            Allow chat for {courseLabel}. {CHAT_OPT_IN_TEXT}
+          </span>
+        </label>
+      )}
 
       {note && <p className="mt-3 text-sm">{note}</p>}
 
