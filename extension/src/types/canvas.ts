@@ -90,7 +90,7 @@ export type TaskKind = "assignment" | "quiz" | "discussion" | "exam";
  * posted: some courses (CS 3700 at Cornell) publish assignments only on
  * Gradescope, which has no public API for students.
  */
-export type TaskSource = "canvas" | "gradescope" | "ed" | "syllabus";
+export type TaskSource = "canvas" | "gradescope" | "ed" | "syllabus" | "manual";
 
 /** Canvas's `workflow_state` for the current user's submission. */
 export type SubmissionWorkflowState =

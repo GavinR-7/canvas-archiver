@@ -9,11 +9,77 @@
 
 import { revokeConsent } from "@/src/consent/consent";
 import { useEffect, useState } from "react";
+import { splitCourses } from "@/src/canvas/visibility";
+import { addEntry, loadManualExams, removeEntry, saveManualExams, type ManualExam, type ManualExams } from "@/src/dates/manual-exams";
+import { loadSnapshot } from "@/src/lib/storage";
+import type { Course } from "@/src/types/canvas";
 import { DEFAULT_SETTINGS, validate, type SyncSettings } from "@/src/sync/github";
 import { DEFAULT_AI, loadAi, saveAi, withRetention as withAiRetention, type AiSettings } from "@/src/ai/model";
 import { INBOX_KEY, loadRoot, pickRoot, requestRootAccess, rootAccess, saveRoot, type RootAccess } from "@/src/files/handle-store";
 import { DEFAULT_FEED, loadFeed, loadFeedStatus, saveFeed, type FeedSettings, type FeedStatus } from "@/src/feed/settings";
 import { loadSettings, loadStatus, saveSettings, withRetention, type SyncStatus } from "@/src/sync/settings";
+
+function ExamDates() {
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [entries, setEntries] = useState<ManualExams>({});
+  const [draft, setDraft] = useState<Record<number, { date: string; time: string; label: string }>>({});
+  const [errors, setErrors] = useState<Record<number, string>>({});
+  const [notices, setNotices] = useState<Record<number, string>>({});
+  useEffect(() => {
+    void loadSnapshot().then((s) => setCourses(splitCourses(s.courses.filter((c) => !c.restricted), new Date()).shown));
+    void loadManualExams().then(setEntries);
+  }, []);
+  const update = async (course: Course, list: ManualExam[]) => {
+    const next = { ...entries, [String(course.id)]: list };
+    setEntries(next);
+    await saveManualExams(next);
+  };
+  const add = async (course: Course) => {
+    const d = draft[course.id] ?? { date: "", time: "", label: "" };
+    const result = addEntry(entries[String(course.id)] ?? [], d);
+    setErrors({ ...errors, [course.id]: result.error ?? "" });
+    setNotices({ ...notices, [course.id]: result.notice ?? "" });
+    if (result.error) return;
+    await update(course, result.list);
+    setDraft({ ...draft, [course.id]: { date: "", time: "", label: "" } });
+  };
+  return (
+    <section className="mt-10">
+      <h2 className="font-medium">Exam dates</h2>
+      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+        For exams the extension cannot read, such as ones in the registrar's list or on Piazza. What you enter is stored on this
+        computer, shows in All exams as "Entered by you" and goes into the deadlines file if that sync is on. Times are Eastern.
+      </p>
+      {courses.length === 0 && <p className="mt-2 text-sm">No current courses yet. Open the extension once so it can load them.</p>}
+      {courses.map((course) => {
+        const list = entries[String(course.id)] ?? [];
+        const d = draft[course.id] ?? { date: "", time: "", label: "" };
+        const set = (patch: Partial<typeof d>) => setDraft({ ...draft, [course.id]: { ...d, ...patch } });
+        return (
+          <div key={course.id} className="mt-4">
+            <h3 className="text-sm font-medium">{course.courseCode || course.name}</h3>
+            <ul className="mt-1 text-sm">
+              {list.map((e, i) => (
+                <li key={`${e.date}-${e.time ?? ""}-${e.label}`}>
+                  {e.date}{e.time ? ` ${e.time}` : ""} {e.label}{" "}
+                  <button type="button" className="underline" onClick={() => void update(course, removeEntry(list, i))}>Remove</button>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-1 flex flex-wrap items-end gap-2 text-sm">
+              <label>Date<input className={input} placeholder="2026-11-05" value={d.date} onChange={(e) => set({ date: e.target.value })} /></label>
+              <label>Time (optional)<input className={input} placeholder="19:30" value={d.time} onChange={(e) => set({ time: e.target.value })} /></label>
+              <label>Label<input className={input} placeholder="Prelim 2" value={d.label} onChange={(e) => set({ label: e.target.value })} /></label>
+              <button type="button" className={button} onClick={() => void add(course)}>Add</button>
+            </div>
+            {notices[course.id] && <p role="status" className="mt-1 text-sm">{notices[course.id]}</p>}
+            {errors[course.id] && <p role="alert" className="mt-1 text-sm text-red-600 dark:text-red-400">{errors[course.id]}</p>}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
 
 const GITHUB = ["https://api.github.com/*"];
 const input = "mt-1 w-full rounded border border-zinc-300 bg-transparent px-2 py-1 text-sm dark:border-zinc-600";
@@ -164,6 +230,8 @@ export default function App() {
           </p>
         )}
       </section>
+
+      <ExamDates />
 
       <section className="mt-10">
         <h2 className="font-medium">Nightly feed to HQ course knowledge</h2>

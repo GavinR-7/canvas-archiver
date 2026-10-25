@@ -39,6 +39,7 @@ import { browserSyllabusDeps } from "@/src/dates/syllabus-reader";
 import { fetchSyllabusTasks } from "@/src/dates/syllabus";
 import { EXAM_DAYS, inWindow, isExamTask } from "@/src/dates/exams";
 import { mergeTasks } from "@/src/dates/merge";
+import { loadManualExams, manualExamTasks, withManualExams } from "@/src/dates/manual-exams";
 import { loadSettings } from "@/src/sync/settings";
 import { syncDue } from "@/src/sync/run";
 import { loadClasses } from "@/src/schedule/model";
@@ -130,7 +131,8 @@ async function refresh(): Promise<Snapshot> {
       });
 
     const gs = await gradescope;
-    const all = [...tasks, ...gs.tasks, ...syllabus, ...ed];
+    const manual = manualExamTasks(await loadManualExams(), courses);
+    const all = [...tasks, ...gs.tasks, ...syllabus, ...ed, ...manual];
     const now = new Date();
     const snapshot: Snapshot = {
       user,
@@ -153,7 +155,7 @@ async function refresh(): Promise<Snapshot> {
       ...previous,
       // Canvas data is stale, but a fresh Gradescope result is still good.
       tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...gs.tasks.filter((task) => inWindow(task, new Date(), UPCOMING_DAYS))]),
-      exams: mergeTasks([...(previous.exams ?? []).filter((task) => task.source !== "gradescope"), ...gs.tasks.filter(isExamTask)]),
+      exams: mergeTasks(withManualExams([...(previous.exams ?? []).filter((task) => task.source !== "gradescope"), ...gs.tasks.filter(isExamTask)], await loadManualExams(), previous.courses)),
       error: describeError(error),
       gradescopeError: gs.error,
     };
