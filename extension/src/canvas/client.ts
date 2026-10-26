@@ -278,5 +278,7 @@ export async function getAll<T>(
     url = response.nextUrl;
   }
 
+  // Hitting the resource ceiling is not evidence that the collection ended.
+  if (url !== null) throw new CanvasError("Canvas pagination reached its page limit before the collection ended.");
   return items;
 }

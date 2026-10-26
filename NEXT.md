@@ -194,3 +194,20 @@ replacement. HOLD remains pending the next exact-head Anvil review.
 CI is repository/head specific: at aa12524 GitHub reports zero configured
 workflows and zero check runs, statuses or PR workflow runs. No billing
 conclusion follows from the historical queue note.
+
+## PR #13 bounded-read repair after T-580
+
+T-580 finished CHANGES REQUESTED on 613615e: a remaining Canvas next URL at
+the 25-page ceiling cannot prove completion. The parent independently found
+the corresponding Ed 50-row saturated-page case. Both are repaired together,
+after the completed review handoff, without increasing either limit or adding
+pagination. Ed also refuses explicit continuation/remaining-result evidence,
+including next-page Link headers. Parsed Ed rows and cached rows remain local;
+incomplete sources never authorize replacement of remote-only deadlines.
+
+The source-truncation regressions use actual readers, background SYNC_NOW and
+syncDue against populated synthetic destinations. They include both empty and
+nonempty Canvas cap exhaustion, cached/remote preservation, maxPages=1,
+normal termination including page 25, saturated/truncated Ed data, parsed
+local updates, and healthy empty/49-row/terminal-header controls. HOLD remains
+pending the next independent exact-head review.

@@ -14,6 +14,7 @@
 import { CanvasError, SessionExpiredError } from "@/src/canvas/errors";
 import { assertCanvasOrigin } from "@/src/canvas/url-guard";
 import { ED_API_ORIGIN } from "@/src/config/ed";
+import { parseLinkHeader } from "@/src/canvas/link-header";
 import { courseKey } from "@/src/dates/merge";
 import { tasksFromText } from "@/src/dates/tasks";
 import { hasApiError, type TaskRead } from "@/src/lib/source-read";
@@ -32,6 +33,7 @@ async function getJson(path: string): Promise<Raw> {
   const url = assertCanvasOrigin(`${ED_API_ORIGIN}${path}`, ED_API_ORIGIN);
   const response = await fetch(url, { method: "GET", credentials: "include", headers: { Accept: "application/json" } });
   if (response.status === 401 || response.status === 403) throw new EdSessionExpiredError();
+  if (parseLinkHeader(response.headers.get("link")).next) throw new CanvasError("Ed returned an unread next page.");
   if (!response.ok) throw new CanvasError(`Ed returned ${response.status} for ${path}.`);
   return (await response.json()) as Raw;
 }
@@ -144,6 +146,27 @@ function checkedThreads(raw: unknown): EdThread[] {
   return normalizeEdThreads(raw as Raw);
 }
 
+// Keep the existing bound: this reader deliberately does not paginate Ed.
+const THREAD_LIMIT = 50;
+
+/** Recognized continuation metadata is evidence of an incomplete page, even below the limit. */
+function hasContinuation(raw: Raw, count: number, nested = false): boolean {
+  if (count >= THREAD_LIMIT) return true;
+  for (const key of ["has_more", "hasMore"]) {
+    if (Object.hasOwn(raw, key) && raw[key] !== false) return true;
+  }
+  for (const key of ["next", "next_page", "nextPage"]) {
+    if (Object.hasOwn(raw, key) && raw[key] !== null && raw[key] !== false && raw[key] !== "") return true;
+  }
+  for (const key of ["total", "total_count", "totalCount"]) {
+    if (Object.hasOwn(raw, key) && (!Number.isSafeInteger(raw[key]) || raw[key] !== count)) return true;
+  }
+  if (Object.hasOwn(raw, "pagination") && raw["pagination"] !== null) {
+    if (nested || !object(raw["pagination"]) || hasContinuation(raw["pagination"], count, true)) return true;
+  }
+  return false;
+}
+
 /** Positive completion requires recognized collections and every relevant row. */
 export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date(), overdueDays = 1): Promise<TaskRead> {
   const tasks: Task[] = [];
@@ -152,11 +175,14 @@ export async function fetchEdTasks(courses: Course[], windowDays: number, now: D
     for (const ed of edCourses) {
       const course = matchCourse(ed, courses);
       if (!course) continue;
-      const threads = checkedThreads(await getJson("/api/courses/" + ed.id + "/threads?limit=50&sort=new"));
+      const page = await getJson("/api/courses/" + ed.id + "/threads?limit=" + THREAD_LIMIT + "&sort=new");
+      const threads = checkedThreads(page);
       for (const thread of threads.filter(worthReading)) {
         const url = "https://edstem.org/us/courses/" + ed.id + "/discussion/" + (thread.number ?? thread.id);
         tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays, overdueDays));
       }
+      // Parsed rows may update the local view, but cannot authorize remote deletion.
+      if (hasContinuation(page, threads.length)) throw new CanvasError("Ed's thread page is saturated or has unread results.");
     }
     return { tasks, complete: true, unavailableCourseIds: [], error: null };
   } catch (error) {
