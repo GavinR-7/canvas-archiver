@@ -23,6 +23,7 @@
  * - **Expired sessions surface as a redirect or HTML**, not a clean 401.
  */
 
+import { hasApiError } from "@/src/lib/source-read";
 import { API_BASE, DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import {
   AccessDeniedError,
@@ -193,6 +194,7 @@ async function requestWithRetry(url: string): Promise<CanvasResponse<unknown>> {
       throw new CanvasError(`Canvas returned non-JSON content for ${url}`);
     }
 
+    if (hasApiError(data)) throw new CanvasError("Canvas returned an error payload for " + url);
     return {
       data,
       nextUrl: parseLinkHeader(response.headers.get("link")).next ?? null,
@@ -255,7 +257,9 @@ export async function getAll<T>(
       // A few endpoints wrap their list, e.g. /planner/items in some versions.
       const wrapped = (payload as Record<string, unknown>)["items"];
       if (Array.isArray(wrapped)) items.push(...(wrapped as T[]));
-      else items.push(payload as T);
+      else throw new CanvasError("Canvas returned an unrecognized list while reading " + path);
+    } else {
+      throw new CanvasError("Canvas returned an unrecognized list while reading " + path);
     }
 
     // The `next` URL is chosen by the server. canvasFetch would reject an

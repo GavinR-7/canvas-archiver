@@ -4,7 +4,7 @@
  * UNVERIFIED against a real account. Written from how Ed's web client behaves
  * (JSON under /api, `GET /api/user` listing courses, `GET /api/courses/:id/threads`).
  * Two things only a live run can settle: the exact response fields (the
- * normalisers below tolerate absence) and whether a cookie alone authenticates
+ * reader refuses unrecognized collections rather than treating them as empty) and whether a cookie alone authenticates
  * from the service worker. A 401 surfaces as "sign in to Ed" and never blanks
  * Canvas or Gradescope data.
  *
@@ -16,6 +16,7 @@ import { assertCanvasOrigin } from "@/src/canvas/url-guard";
 import { ED_API_ORIGIN } from "@/src/config/ed";
 import { courseKey } from "@/src/dates/merge";
 import { tasksFromText } from "@/src/dates/tasks";
+import { hasApiError, type TaskRead } from "@/src/lib/source-read";
 import type { Course, Task } from "@/src/types/canvas";
 
 type Raw = Record<string, unknown>;
@@ -105,17 +106,60 @@ export function matchCourse(ed: EdCourse, courses: Course[]): Course | null {
   return courses.find((c) => c.courseCode && haystack.includes(courseKey(c.courseCode))) ?? null;
 }
 
-export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date(), overdueDays = 1): Promise<Task[]> {
-  const edCourses = normalizeEdCourses(await getJson("/api/user"));
-  const tasks: Task[] = [];
-  for (const ed of edCourses) {
-    const course = matchCourse(ed, courses);
-    if (!course) continue;
-    const threads = normalizeEdThreads(await getJson(`/api/courses/${ed.id}/threads?limit=50&sort=new`));
-    for (const thread of threads.filter(worthReading)) {
-      const url = `https://edstem.org/us/courses/${ed.id}/discussion/${thread.number ?? thread.id}`;
-      tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays, overdueDays));
+const object = (value: unknown): value is Raw => value !== null && typeof value === "object" && !Array.isArray(value);
+const validId = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+function collection(raw: unknown, key: string): Raw[] {
+  if (!object(raw) || hasApiError(raw) || !Array.isArray(raw[key]) || !raw[key].every(object)) {
+    throw new CanvasError("Ed returned an unrecognized " + key + " collection.");
+  }
+  return raw[key] as Raw[];
+}
+
+function checkedCourses(raw: unknown): EdCourse[] {
+  const entries = collection(raw, "courses");
+  for (const entry of entries) {
+    const course = Object.hasOwn(entry, "course") ? entry["course"] : entry;
+    if (!object(course) || hasApiError(entry) || hasApiError(course) || !validId(course["id"]) ||
+        (course["status"] !== "archived" && !str(course["code"]) && !str(course["name"]))) {
+      throw new CanvasError("Ed returned an unreadable course.");
     }
   }
-  return tasks;
+  return normalizeEdCourses(raw as Raw);
+}
+
+function checkedThreads(raw: unknown): EdThread[] {
+  const entries = collection(raw, "threads");
+  for (const thread of entries) {
+    const type = thread["type"];
+    if (hasApiError(thread) || !validId(thread["id"]) || !["announcement", "post", "question"].includes(String(type)) ||
+        ["is_pinned", "pinned"].some((key) => Object.hasOwn(thread, key) && typeof thread[key] !== "boolean")) {
+      throw new CanvasError("Ed returned an unreadable thread.");
+    }
+    if ((type === "announcement" || thread["is_pinned"] === true || thread["pinned"] === true) &&
+        (typeof thread["title"] !== "string" || (typeof thread["document"] !== "string" && typeof thread["content"] !== "string"))) {
+      throw new CanvasError("Ed did not return readable announcement text.");
+    }
+  }
+  return normalizeEdThreads(raw as Raw);
+}
+
+/** Positive completion requires recognized collections and every relevant row. */
+export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date(), overdueDays = 1): Promise<TaskRead> {
+  const tasks: Task[] = [];
+  try {
+    const edCourses = checkedCourses(await getJson("/api/user"));
+    for (const ed of edCourses) {
+      const course = matchCourse(ed, courses);
+      if (!course) continue;
+      const threads = checkedThreads(await getJson("/api/courses/" + ed.id + "/threads?limit=50&sort=new"));
+      for (const thread of threads.filter(worthReading)) {
+        const url = "https://edstem.org/us/courses/" + ed.id + "/discussion/" + (thread.number ?? thread.id);
+        tasks.push(...tasksFromText(thread.text, course, "ed", url, now, windowDays, overdueDays));
+      }
+    }
+    return { tasks, complete: true, unavailableCourseIds: [], error: null };
+  } catch (error) {
+    return { tasks, complete: false, unavailableCourseIds: courses.map((course) => course.id), error };
+  }
 }

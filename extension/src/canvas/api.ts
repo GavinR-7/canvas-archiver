@@ -7,9 +7,9 @@
 
 import type { CanvasUser, Course, Task } from "@/src/types/canvas";
 import { getAll, getOne } from "./client";
-import { AccessDeniedError, NotFoundError } from "./errors";
+import { AccessDeniedError, NotFoundError, CanvasError } from "./errors";
 import { normalizeCourse, normalizePlannerItem, normalizeUser } from "./normalize";
-import type { TaskRead } from "@/src/lib/source-read";
+import { hasApiError, type TaskRead } from "@/src/lib/source-read";
 import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
 import { termSortKey } from "./terms";
@@ -35,6 +35,9 @@ export async function fetchActiveCourses(): Promise<Course[]> {
     "include[]": ["term", "teachers"],
   });
 
+  if (raw.some((entry) => !entry || hasApiError(entry) || !Number.isSafeInteger(entry["id"]) || Number(entry["id"]) <= 0)) {
+    throw new CanvasError("Canvas returned an unreadable course list.");
+  }
   return raw
     .map(normalizeCourse)
     .filter((course) => course.id > 0)
@@ -79,6 +82,20 @@ export async function fetchUpcomingTasks(
     throw error;
   }
 
+  const knownIgnored = new Set(["wiki_page", "planner_note", "calendar_event", "assessment_request"]);
+  if (raw.some((entry) => {
+    if (!entry || typeof entry !== "object" || hasApiError(entry)) return true;
+    if (knownIgnored.has(String(entry["plannable_type"]))) return false;
+    const item = entry["plannable"] as Record<string, unknown> | undefined;
+    return !["assignment", "quiz", "discussion_topic"].includes(String(entry["plannable_type"])) ||
+      !item || typeof item !== "object" || hasApiError(item) || typeof item["title"] !== "string" ||
+      !Number.isSafeInteger(entry["plannable_id"] ?? item["id"]) ||
+      !Object.hasOwn(entry, "plannable_date") ||
+      (item["due_at"] !== undefined && item["due_at"] !== null && (typeof item["due_at"] !== "string" || !Number.isFinite(Date.parse(item["due_at"])))) ||
+      (entry["plannable_date"] !== null && !Number.isFinite(Date.parse(String(entry["plannable_date"]))));
+  })) {
+    return { tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error: new CanvasError("Canvas returned an unreadable planner collection.") };
+  }
   const lookup = new Map(courses.map((course) => [course.id, course]));
 
   const tasks = raw

@@ -46,12 +46,13 @@ describe("scheduler source windows", () => {
   it("includes recently overdue and far-future Gradescope assignments", async () => {
     const rows = dates.map((dueAt, index) => '<tr><th><a href="/courses/900001/assignments/' + (index + 1) +
       '/submissions/1">Work ' + index + '</a></th><td><time class="submissionTimeChart--dueDate" datetime="' +
-      dueAt.replace(".000Z", "Z") + '">Due</time></td></tr>').join("");
+      dueAt.replace(/\.\d{3}Z$/, "Z") + '">Due</time></td></tr>').join("");
     vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(
-      url.endsWith("/account") ? ACCOUNT_PAGE : url.endsWith("/900001") ? "<table>" + rows + "</table>" : "<table></table>",
+      url.endsWith("/account") ? ACCOUNT_PAGE : url.endsWith("/900001") ? '<table id="assignments-student-table"><tbody>' + rows + '</tbody></table>' : '<table id="assignments-student-table"><tbody></tbody></table>' ,
       { status: 200 },
     )));
-    const tasks = await fetchGradescopeTasks(60, now, 7);
+    const { tasks, complete } = await fetchGradescopeTasks(60, now, 7);
+    expect(complete).toBe(true);
     expect(tasks.map((t) => t.id)).toContain("gradescope:3");
     expect(tasks.map((t) => t.id)).toContain("gradescope:4");
     expect(tasks.map((t) => t.id)).not.toContain("gradescope:1");
@@ -67,7 +68,8 @@ describe("scheduler source windows", () => {
       : { threads: [{ id: 1, type: "announcement", title: "", content: text }] }), {
       headers: { "Content-Type": "application/json" },
     })));
-    const ed = await fetchEdTasks([course], 60, now, 7);
+    const { tasks: ed, complete: edComplete } = await fetchEdTasks([course], 60, now, 7);
+    expect(edComplete).toBe(true);
     expect(ed).toHaveLength(2);
     expect(ed.map((t) => t.dueAt)).toEqual(syllabus.map((t) => t.dueAt));
   });

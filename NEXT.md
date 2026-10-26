@@ -173,3 +173,24 @@ success, legacy unknown completeness and genuine empty success. Rendered popup
 and Upcoming tests cover matching fourteen-day counts over spring/fall DST.
 No live account or real destination is used. HOLD remains pending Anvil's
 independent review of the repaired head.
+
+## PR #13 follow-up: Anvil T-575 source recognition
+
+T-575 reproduced a remaining Ed HTTP-200 unknown-layout overwrite at aa12524.
+Ed and Gradescope now return explicit TaskRead results after recognizing their
+collections, rows and supported page/table structure. A successful function
+return or a permissive parser's empty array is not completeness. Unknown JSON,
+HTML and API error envelopes keep cached rows and prevent remote replacement.
+Recognized empty arrays/lists/tables can still clear the remote file. Canvas
+malformed list envelopes and unreadable course/planner rows are refused too.
+No hosts, credentials or scheduling features are added.
+
+Transport-only tests use all real readers through SYNC_NOW and syncDue with
+populated synthetic remote data. They cover malformed course/thread lists,
+unknown Gradescope markup, Canvas collections, cache retention, and recognized
+empty controls. Live markup stays unverified; unsupported layouts pause remote
+replacement. HOLD remains pending the next exact-head Anvil review.
+
+CI is repository/head specific: at aa12524 GitHub reports zero configured
+workflows and zero check runs, statuses or PR workflow runs. No billing
+conclusion follows from the historical queue note.

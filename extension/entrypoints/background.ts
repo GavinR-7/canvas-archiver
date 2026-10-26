@@ -40,6 +40,7 @@ import { loadClasses } from "@/src/schedule/model";
 import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
 import { hasConsent } from "@/src/consent/consent";
 import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS } from "@/src/lib/task-window";
+import type { TaskSource } from "@/src/types/canvas";
 import type { TaskRead } from "@/src/lib/source-read";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
@@ -73,6 +74,12 @@ function describeError(error: unknown, service = "Canvas"): SnapshotError {
   return { kind: "other", message: String(error) };
 }
 
+/** A partial source may contribute fresh rows but cannot discard its cached rows. */
+function retainedTasks(previous: Snapshot, source: TaskSource, read: TaskRead) {
+  if (read.complete) return read.tasks;
+  return [...new Map([...previous.tasks.filter((task) => task.source === source), ...read.tasks].map((task) => [task.id, task])).values()];
+}
+
 /** Fetch everything from Canvas and cache it. */
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
@@ -81,7 +88,7 @@ async function refresh(): Promise<Snapshot> {
   // Gradescope runs alongside Canvas and fails independently. Its tasks from
   // the previous fetch are kept on failure so a flaky page doesn't blank them.
   const gradescope = fetchGradescopeTasks(DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
-    (tasks) => ({ tasks, complete: true, error: null as SnapshotError | null }),
+    (read) => ({ tasks: retainedTasks(previous, "gradescope", read), complete: read.complete, error: read.complete ? null : describeError(read.error, "Gradescope") }),
     (error: unknown) => {
       console.warn("[canvas-archiver] gradescope refresh failed", error);
       return {
@@ -111,12 +118,11 @@ async function refresh(): Promise<Snapshot> {
       ...syllabusRead.tasks,
     ];
     const syllabusError = syllabusRead.complete ? null : describeError(syllabusRead.error, "Canvas syllabus");
-    let edError: SnapshotError | null = null;
-    const ed = await fetchEdTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown) => {
-      console.warn("[canvas-archiver] ed refresh failed", error);
-      edError = describeError(error, "Ed Discussion");
-      return previous.tasks.filter((task) => task.source === "ed");
-    });
+    const edRead = await fetchEdTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
+      tasks: [], complete: false, unavailableCourseIds: current.map((course) => course.id), error,
+    }));
+    const ed = retainedTasks(previous, "ed", edRead);
+    const edError = edRead.complete ? null : describeError(edRead.error, "Ed Discussion");
 
     const gs = await gradescope;
     const snapshot: Snapshot = {
@@ -128,7 +134,7 @@ async function refresh(): Promise<Snapshot> {
       gradescopeError: gs.error,
       edError,
       syllabusError,
-      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusRead.complete, ed: edError === null },
+      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusRead.complete, ed: edRead.complete },
     };
     await saveSnapshot(snapshot);
     return snapshot;

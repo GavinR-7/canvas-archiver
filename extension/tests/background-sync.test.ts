@@ -11,9 +11,9 @@ vi.mock("@/src/sync/settings", () => ({ loadSettings: async () => ({ enabled: tr
 vi.mock("@/src/schedule/model", () => ({ loadClasses: async () => [] }));
 vi.mock("@/src/consent/consent", () => ({ hasConsent: async () => true }));
 vi.mock("@/src/feed/settings", () => ({ loadFeed: async () => ({ enabled: false }), minutesUntilHour: () => 1 }));
-vi.mock("@/src/gradescope/api", () => ({ fetchGradescopeTasks: async () => [] }));
+vi.mock("@/src/gradescope/api", () => ({ fetchGradescopeTasks: async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null }) }));
 vi.mock("@/src/dates/syllabus", () => ({ fetchSyllabusTasks: async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null }) }));
-vi.mock("@/src/ed/api", () => ({ fetchEdTasks: async () => [] }));
+vi.mock("@/src/ed/api", () => ({ fetchEdTasks: async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null }) }));
 vi.mock("@/src/lib/storage", () => ({ loadSnapshot: async () => EMPTY_SNAPSHOT, saveSnapshot: async () => {} }));
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 

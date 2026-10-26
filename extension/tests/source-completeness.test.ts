@@ -5,8 +5,8 @@ import { normalizeCourse, normalizePlannerItem } from "@/src/canvas/normalize";
 import { buildDueFile } from "@/src/sync/due";
 import { syncDue } from "@/src/sync/run";
 
-vi.mock("@/src/gradescope/api", () => ({ fetchGradescopeTasks: async () => [] }));
-vi.mock("@/src/ed/api", () => ({ fetchEdTasks: async () => [] }));
+vi.mock("@/src/gradescope/api", () => ({ fetchGradescopeTasks: async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null }) }));
+vi.mock("@/src/ed/api", () => ({ fetchEdTasks: async () => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null }) }));
 vi.mock("@/src/feed/settings", () => ({ loadFeed: async () => ({ enabled: false }), minutesUntilHour: () => 1 }));
 const now = new Date("2026-10-25T12:00:00Z");
 const complete = { canvas: true, gradescope: true, syllabus: true, ed: true };
