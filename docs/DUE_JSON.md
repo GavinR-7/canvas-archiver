@@ -25,13 +25,22 @@ Written by the Canvas Archiver extension to the GitHub repo the person chooses i
 }
 ```
 
-- Window: from 7 days ago (so overdue work can be flagged) to 60 days ahead. Sorted by `dueAt`.
+- Window: from 7 days ago (so overdue work can be flagged) to 60 days ahead, inclusive at both ends. These are rolling 24-hour days measured from the refresh clock, including across DST. Canvas, Gradescope, syllabus and Ed reads use this same window; Upcoming separately displays only the next 14 days.
+- Timestamps are exported as canonical UTC ISO strings with milliseconds. Sorted by `dueAt`, then `id`; equivalent offsets serialize identically.
 - `done`: submitted, graded or excused. List as done, not as a deadline.
 - `unconfirmed`: read out of prose (syllabus, Ed announcement), not a Canvas/Gradescope date. A plan should say "per the syllabus".
 - `allDay` with no stated time means `dueAt` is 11:59 PM Eastern that day.
 - `dueDay` is the Eastern calendar day, so a reader never converts UTC.
 - Duplicates across sources are already merged (priority Canvas > Gradescope > Ed > syllabus).
 - Contains no grades, scores, files or course content.
+- A successful empty refresh writes `items: []`, clearing removed/out-of-window deadlines instead of leaving an old file forever. Every replacement (empty or nonempty) requires affirmative completeness from the current Canvas planner, Gradescope, syllabus and Ed reads. Null error flags and legacy caches without this evidence cannot authorize replacement.
+- Planner 403/404 responses report incomplete reads and preserve cached Canvas deadlines. Per-course syllabus failures (including 403/404, restricted courses and missing response fields) report incomplete reads and retain that course's cached dates, while readable courses still refresh locally. Any failed or unverified source prevents the whole-list GitHub write and Settings reports the reason. This preserves remote-only deadlines too; copying only a nonempty partial cache could otherwise erase them.
+- Ed requires recognized course and thread arrays with readable required rows; HTTP 200 error envelopes, missing collections and malformed relevant rows are incomplete, not empty. Gradescope requires a recognized course list and student assignment table; unknown layouts and unreadable rows/dates are incomplete. Explicit empty Ed arrays and empty Gradescope lists/tables remain valid. The permissive normalizers are not completeness evidence.
+- Canvas collection responses must be arrays or recognized items-array envelopes, with recognizable course/planner rows; error envelopes are refused. Syllabus responses require the explicit syllabus field.
+- Bounded reads must terminate affirmatively: an Ed page with 50 or more rows or explicit continuation/remaining-result metadata is incomplete, as is an Ed response with a next-page Link. Parsed rows can update the local view, but cannot authorize a remote replacement. Ed's existing 50-row request stays bounded; pagination is not implemented.
+- Canvas keeps its existing 25-page cap, but refuses the result if a next URL remains when that cap is reached. A terminal 25th page is complete. This also protects the course-list reader, not only planner items.
+- Local healthy sources still refresh during an outage. GitHub replacement resumes after all required readers succeed. `generatedAt` is the export time, not a per-source freshness timestamp. Completeness evidence stays in the local snapshot; the public due.json version-1 shape is unchanged.
+- Idempotence ignores `generatedAt`, but compares the version, timezone and normalized item list.
 
 Token: fine-grained, one repository, Contents read and write. Stored in the extension's local storage only.
 

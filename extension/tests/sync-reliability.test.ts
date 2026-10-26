@@ -5,7 +5,7 @@ import { EMPTY_SNAPSHOT, type Snapshot } from "@/src/lib/messages";
 
 const settings: SyncSettings = { enabled: true, repo: "owner/repo", path: "due.json", token: "test-token" };
 const reply = (status: number, body: unknown = {}) => new Response(JSON.stringify(body), { status });
-const snapshot: Snapshot = { ...EMPTY_SNAPSHOT, fetchedAt: "2026-10-25T12:00:00Z", tasks: [{
+const snapshot: Snapshot = { ...EMPTY_SNAPSHOT, sourceCompleteness: { canvas: true, gradescope: true, syllabus: true, ed: true }, fetchedAt: "2026-10-25T12:00:00Z", tasks: [{
   id: "canvas:1", source: "canvas", canvasId: 1, courseId: 1, courseName: "Course", courseCode: "CS 1",
   title: "Homework", kind: "assignment", dueAt: "2026-10-26T12:00:00Z", htmlUrl: "https://canvas.cornell.edu/x",
   allDay: false, unlockAt: null, lockAt: null, pointsPossible: null, submissionTypes: [], lockedForUser: false, submission: null,

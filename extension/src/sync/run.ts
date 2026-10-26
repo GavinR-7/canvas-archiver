@@ -21,11 +21,20 @@ export async function syncDue(
     await saveStatus({ at: now.toISOString(), ok: false, message: problem });
     return { status: "failed", message: problem };
   }
-  // Nothing fetched yet (or Canvas failed with an empty cache): never overwrite a good file with an empty one.
-  if (!snapshot.fetchedAt || snapshot.tasks.length === 0) {
+  // Nothing fetched yet: absence of a cache is not an authoritative empty result.
+  if (!snapshot.fetchedAt) {
     const outcome: SyncOutcome = { status: "failed", message: "No deadlines loaded yet; sync skipped." };
     await saveStatus({ at: now.toISOString(), ok: false, message: outcome.message });
     return outcome;
+  }
+  // Replacing the whole remote list requires affirmative read evidence. This
+  // also protects nonempty partial lists from deleting another source's rows.
+  const complete = snapshot.sourceCompleteness;
+  if (!complete || complete.canvas !== true || complete.gradescope !== true || complete.syllabus !== true || complete.ed !== true ||
+      snapshot.error || snapshot.gradescopeError || snapshot.edError || snapshot.syllabusError) {
+    const message = "Deadline sources are incomplete or unverified; sync skipped to keep existing deadlines.";
+    await saveStatus({ at: now.toISOString(), ok: false, message });
+    return { status: "failed", message };
   }
   const file = buildDueFile(snapshot.tasks, now);
   const outcome = await putFile(settings, serialize(file), (existing) => sameContent(existing, file), `chore: update ${settings.path} (${file.items.length} deadlines)`, doFetch);

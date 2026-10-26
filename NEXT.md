@@ -65,6 +65,24 @@ Built: Course chat page (popup → "Course chat…"). `src/chat/retrieve.ts` (ch
 - Needs `https://edstem.org/*` (and `us.edstem.org` / the region host Cornell uses; check).
 - Done when: unread staff posts from the last 7 days show per course; build and tests green.
 
+## Scheduler follow-up: complete deadline window (codex/scheduler-due-window)
+
+The scheduler cache and source reads now cover the due.json contract: seven
+rolling days overdue through sixty days ahead, from one shared refresh clock.
+Upcoming remains a fourteen-day view; the weekly schedule can use the broader
+cache. Exports normalize timestamps to UTC milliseconds and compare timezone
+as part of idempotence. Healthy empty refreshes clear removed deadlines only with affirmative source
+completeness. Incomplete or legacy snapshots cannot replace the remote list,
+even when nonempty. Planner denials and each unreadable syllabus course retain
+cached dates; other readable courses and sources still refresh locally.
+The popup's fourteen-day count uses the same bounds as Upcoming.
+
+Offline tests cover all four source adapters, inclusive bounds across DST,
+worker wiring, empty/failing refreshes, stable timestamps and the Upcoming
+filter. Unverified: the live source APIs and parsers already listed above.
+Still next: Canvas calendar events and verified Ed/Gradescope captures; this
+change does not claim to discover deadlines that the current adapters omit.
+
 ## Slice 3 — Due-date sync to gavin-data
 
 - Every 2 hours (`chrome.alarms`), write `due.json` (all `Task`s due in the window, normalized, no titles of private notes) to the `gavin-data` repo through the GitHub contents API (`PUT /repos/.../contents/due.json`).
@@ -136,3 +154,60 @@ refresh-and-upload per worker lifetime. Failed schedule uploads now mark the
 combined run as failed in Settings. Offline regressions cover hung fetch/body,
 fresh-SHA conflict recovery, concurrent calls and partial success. Still
 unverified: live token/permission behavior and actual worker termination.
+
+## PR #13 repair: Anvil T-475 and connector findings
+
+The original null-error check missed planner and syllabus readers suppressing
+403/404 into empty lists. Both readers now return explicit read results;
+syllabus results also identify unreadable courses. The worker records positive
+per-source completeness and retains cached deadlines for unavailable reads.
+Sync requires every required source to be affirmatively complete before
+replacing the destination, including legacy-cache and nonempty partial cases.
+This deliberately postpones GitHub updates while any source is unavailable;
+it preserves remote-only rows that the local cache may never have loaded.
+
+Regression tests use the real Canvas HTTP client, readers, background
+SYNC_NOW and sync runner against synthetic services and a populated synthetic
+remote. They cover planner/syllabus 403/404, cache retention, partial syllabus
+success, legacy unknown completeness and genuine empty success. Rendered popup
+and Upcoming tests cover matching fourteen-day counts over spring/fall DST.
+No live account or real destination is used. HOLD remains pending Anvil's
+independent review of the repaired head.
+
+## PR #13 follow-up: Anvil T-575 source recognition
+
+T-575 reproduced a remaining Ed HTTP-200 unknown-layout overwrite at aa12524.
+Ed and Gradescope now return explicit TaskRead results after recognizing their
+collections, rows and supported page/table structure. A successful function
+return or a permissive parser's empty array is not completeness. Unknown JSON,
+HTML and API error envelopes keep cached rows and prevent remote replacement.
+Recognized empty arrays/lists/tables can still clear the remote file. Canvas
+malformed list envelopes and unreadable course/planner rows are refused too.
+No hosts, credentials or scheduling features are added.
+
+Transport-only tests use all real readers through SYNC_NOW and syncDue with
+populated synthetic remote data. They cover malformed course/thread lists,
+unknown Gradescope markup, Canvas collections, cache retention, and recognized
+empty controls. Live markup stays unverified; unsupported layouts pause remote
+replacement. HOLD remains pending the next exact-head Anvil review.
+
+CI is repository/head specific: at aa12524 GitHub reports zero configured
+workflows and zero check runs, statuses or PR workflow runs. No billing
+conclusion follows from the historical queue note.
+
+## PR #13 bounded-read repair after T-580
+
+T-580 finished CHANGES REQUESTED on 613615e: a remaining Canvas next URL at
+the 25-page ceiling cannot prove completion. The parent independently found
+the corresponding Ed 50-row saturated-page case. Both are repaired together,
+after the completed review handoff, without increasing either limit or adding
+pagination. Ed also refuses explicit continuation/remaining-result evidence,
+including next-page Link headers. Parsed Ed rows and cached rows remain local;
+incomplete sources never authorize replacement of remote-only deadlines.
+
+The source-truncation regressions use actual readers, background SYNC_NOW and
+syncDue against populated synthetic destinations. They include both empty and
+nonempty Canvas cap exhaustion, cached/remote preservation, maxPages=1,
+normal termination including page 25, saturated/truncated Ed data, parsed
+local updates, and healthy empty/49-row/terminal-header controls. HOLD remains
+pending the next independent exact-head review.

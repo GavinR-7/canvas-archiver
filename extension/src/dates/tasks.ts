@@ -1,5 +1,6 @@
 /** Turning extracted date candidates into `Task`s the rest of the extension already understands. */
 
+import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import type { Course, Task, TaskSource } from "@/src/types/canvas";
 import { extractExamDates, type DateCandidate } from "./extract";
 
@@ -42,13 +43,10 @@ export function tasksFromText(
   url: string | null,
   now: Date,
   windowDays: number,
+  overdueDays = 1,
 ): Task[] {
-  const from = now.getTime() - 86_400_000;
-  const to = now.getTime() + windowDays * 86_400_000;
+  const window = taskWindow(now, windowDays, overdueDays);
   return extractExamDates(html, now)
-    .filter((c) => {
-      const t = new Date(c.at).getTime();
-      return t >= from && t <= to;
-    })
+    .filter((c) => inTaskWindow(c.at, window))
     .map((c) => candidateToTask(c, course, source, url));
 }

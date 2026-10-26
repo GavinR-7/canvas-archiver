@@ -10,12 +10,11 @@
  * ignores `generatedAt`, so an unchanged schedule produces no commit.
  */
 
+import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS, taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { easternDay } from "@/src/dates/merge";
 import type { Task } from "@/src/types/canvas";
 
 export const DUE_VERSION = 1;
-/** Past-due-but-unsubmitted work stays listed this long, so the plan can flag it. */
-const KEEP_OVERDUE_DAYS = 7;
 
 export interface DueItem {
   id: string;
@@ -47,14 +46,11 @@ const isDone = (task: Task) => {
   return s === "submitted" || s === "graded" || task.submission?.excused === true;
 };
 
-export function buildDueFile(tasks: Task[], now: Date, windowDays = 60): DueFile {
-  const from = now.getTime() - KEEP_OVERDUE_DAYS * 86_400_000;
-  const to = now.getTime() + windowDays * 86_400_000;
+export function buildDueFile(tasks: Task[], now: Date, windowDays = DEADLINE_LOOKAHEAD_DAYS): DueFile {
+  const window = taskWindow(now, windowDays, DEADLINE_OVERDUE_DAYS);
   const items: DueItem[] = tasks
     .filter((t): t is Task & { dueAt: string } => {
-      if (!t.dueAt) return false;
-      const at = new Date(t.dueAt).getTime();
-      return at >= from && at <= to;
+      return t.dueAt !== null && inTaskWindow(t.dueAt, window);
     })
     .map((t) => ({
       id: t.id,
@@ -62,7 +58,7 @@ export function buildDueFile(tasks: Task[], now: Date, windowDays = 60): DueFile
       course: t.courseCode || t.courseName,
       title: t.title,
       kind: t.kind,
-      dueAt: t.dueAt,
+      dueAt: new Date(t.dueAt).toISOString(),
       dueDay: easternDay(t.dueAt),
       allDay: t.allDay,
       url: t.htmlUrl,
@@ -81,7 +77,7 @@ export function serialize(file: DueFile): string {
 export function sameContent(existing: string, next: DueFile): boolean {
   try {
     const old = JSON.parse(existing) as Partial<DueFile>;
-    return JSON.stringify(old.items) === JSON.stringify(next.items) && old.version === next.version;
+    return JSON.stringify(old.items) === JSON.stringify(next.items) && old.version === next.version && old.timezone === next.timezone;
   } catch {
     return false;
   }

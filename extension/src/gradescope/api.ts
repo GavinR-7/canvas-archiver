@@ -11,11 +11,13 @@
 import { SessionExpiredError, CanvasError } from "@/src/canvas/errors";
 import { currentTermCode, termSortKey } from "@/src/canvas/terms";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
+import type { TaskRead } from "@/src/lib/source-read";
 import type { Task } from "@/src/types/canvas";
 import { assertCanvasOrigin } from "@/src/canvas/url-guard";
 import { listGradescopeFiles, type GradescopeListing } from "./files";
-import { parseAssignments, parseCourses, type GradescopeCourse } from "./parse";
+import { parseCourses, recognizedAssignments, recognizedCourses, type GradescopeCourse } from "./parse";
 
 export class GradescopeSessionExpiredError extends SessionExpiredError {
   constructor() {
@@ -68,31 +70,23 @@ export function currentCourses(courses: GradescopeCourse[], now: Date): Gradesco
 export async function fetchGradescopeTasks(
   days: number,
   now: Date = new Date(),
-): Promise<Task[]> {
-  const { html } = await getHtml("/account");
-  const courses = parseCourses(html);
-
-  // An authenticated account page always has at least the course list
-  // container; zero courses with no error is a layout change or a landing page.
-  if (courses.length === 0 && !/courseList/.test(html)) {
-    throw new GradescopeSessionExpiredError();
-  }
-
-  const end = now.getTime() + days * 24 * 60 * 60 * 1000;
+  overdueDays = 0,
+): Promise<TaskRead> {
   const tasks: Task[] = [];
-
-  for (const course of currentCourses(courses, now)) {
-    const page = await getHtml(`/courses/${course.id}`);
-    tasks.push(...parseAssignments(page.html, course));
+  const window = taskWindow(now, days, overdueDays);
+  try {
+    const { html } = await getHtml("/account");
+    const courses = recognizedCourses(html);
+    const current = currentCourses(courses, now);
+    if (courses.length > 0 && current.length === 0) throw new CanvasError("Gradescope course terms were not recognized.");
+    for (const course of current) {
+      const page = await getHtml("/courses/" + course.id);
+      tasks.push(...recognizedAssignments(page.html, course));
+    }
+    return { tasks: tasks.filter((task) => inTaskWindow(task.dueAt, window)).sort(byDueDate), complete: true, unavailableCourseIds: [], error: null };
+  } catch (error) {
+    return { tasks: tasks.filter((task) => inTaskWindow(task.dueAt, window)).sort(byDueDate), complete: false, unavailableCourseIds: [], error };
   }
-
-  return tasks
-    .filter((task) => {
-      if (!task.dueAt) return false;
-      const due = new Date(task.dueAt).getTime();
-      return due >= now.getTime() && due <= end;
-    })
-    .sort(byDueDate);
 }
 
 /**

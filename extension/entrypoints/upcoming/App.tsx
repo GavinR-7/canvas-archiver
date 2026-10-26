@@ -11,6 +11,7 @@
  */
 
 import { useMemo } from "react";
+import { tasksInWindow, taskWindow } from "@/src/lib/task-window";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
@@ -95,7 +96,7 @@ export default function App() {
 
   // `now` is in the dependency list so grouping headings re-derive when the
   // clock crosses midnight, not only when the data changes.
-  const groups = useMemo(() => groupByDay(tasks), [tasks, now]);
+  const groups = useMemo(() => groupByDay(tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS))), [tasks, now]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
