@@ -9,8 +9,10 @@
 
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { taskWindow, tasksInWindow } from "@/src/lib/task-window";
+import { useEffect, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { OPEN_CANVAS_PROMPT, canvasTabIsActive } from "@/src/lib/canvas-tab";
 import { taskStatus } from "@/src/lib/task-status";
 import { describeDue } from "@/src/lib/time";
 import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
@@ -36,12 +38,22 @@ function openBrowse() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("browse.html") });
 }
 
+function openCanvas() {
+  void chrome.tabs.create({ url: DEFAULT_CANVAS_ORIGIN });
+}
+
 function openFiles() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("files.html") });
 }
 
 export default function App() {
-  const { snapshot, loading, refreshing, refresh } = useSnapshot();
+  // null until known, so the prompt does not flash on a Canvas tab.
+  const [onCanvas, setOnCanvas] = useState<boolean | null>(null);
+  useEffect(() => {
+    void canvasTabIsActive().then(setOnCanvas);
+  }, []);
+  // Off Canvas the popup only shows what is stored: no snapshot request, so nothing reaches the network until the person opens Canvas.
+  const { snapshot, loading, refreshing, refresh } = useSnapshot(onCanvas === null ? "wait" : onCanvas ? "network" : "cache");
   const now = useNow();
   const { user, tasks, error, gradescopeError } = snapshot;
   const filter = useCourseFilter("popup", snapshot.courses);
@@ -73,12 +85,25 @@ export default function App() {
         <button
           type="button"
           onClick={refresh}
-          disabled={refreshing}
+          disabled={refreshing || onCanvas !== true}
           className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </header>
+
+      {onCanvas === false && (
+        <div className="mb-3 flex items-center justify-between gap-2 rounded-md bg-zinc-100 px-3 py-2 text-xs dark:bg-zinc-800">
+          <span>{OPEN_CANVAS_PROMPT}</span>
+          <button
+            type="button"
+            onClick={openCanvas}
+            className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 font-medium hover:bg-white dark:border-zinc-600 dark:hover:bg-zinc-700"
+          >
+            Open Canvas
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-3">

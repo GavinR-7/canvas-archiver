@@ -84,6 +84,12 @@ function retainedTasks(previous: Snapshot, source: TaskSource, read: TaskRead) {
   return [...new Map([...[...previous.tasks, ...(previous.exams ?? [])].filter((task) => task.source === source), ...read.tasks].map((task) => [task.id, task])).values()];
 }
 
+/** Expected signed-out states are already shown in the snapshot. */
+function logFailure(what: string, error: unknown) {
+  if (error instanceof SessionExpiredError) console.debug("[canvas-archiver] " + what + ": " + error.message);
+  else console.warn("[canvas-archiver] " + what, error);
+}
+
 /** Fetch everything from Canvas and cache it. */
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
@@ -97,7 +103,7 @@ async function refresh(): Promise<Snapshot> {
   const gradescope = fetchGradescopeTasks(EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
     (read) => ({ tasks: retainedTasks(previous, "gradescope", read), complete: read.complete, error: read.complete ? null : describeError(read.error, "Gradescope") }),
     (error: unknown) => {
-      console.warn("[canvas-archiver] gradescope refresh failed", error);
+      logFailure("gradescope refresh failed", error);
       return {
         tasks: previousAll.filter((task) => task.source === "gradescope"),
         complete: false,
@@ -158,7 +164,7 @@ async function refresh(): Promise<Snapshot> {
     await saveSnapshot(snapshot);
     return snapshot;
   } catch (error) {
-    console.warn("[canvas-archiver] refresh failed", error);
+    logFailure("refresh failed", error);
     // Keep whatever was cached and attach the error, so the UI can show stale
     // data with a warning rather than going blank.
     const gs = await gradescope;

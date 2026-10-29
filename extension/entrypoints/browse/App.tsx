@@ -8,6 +8,7 @@
  * course. Canvas files, plus the class's Gradescope handouts when they load; read-only; the same folder and permissions as Files.
  */
 
+import { describeRun } from "@/src/files/summary";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { fetchCourseSources } from "@/src/files/api";
@@ -300,7 +301,7 @@ export default function App() {
         <section className="mt-6" aria-live="polite">
           <h2 className="font-medium">Done</h2>
           <p className="mt-1 text-sm">
-            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} are in the browser's Downloads folder, not in the archive folder (their file host refused a direct read); the lines below list them.`}
+            {describeRun(result)}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} are in the browser's Downloads folder, not in the archive folder (their file host refused a direct read); the lines below list them.`}
           </p>
           {looksBlockedByCors(result) && (
             <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">

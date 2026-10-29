@@ -7,6 +7,7 @@
  * run; a second run skips what is already on disk.
  */
 
+import { describeRun } from "@/src/files/summary";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { fetchCourseSources } from "@/src/files/api";
@@ -284,7 +285,7 @@ export default function App() {
         <section className="mt-6" aria-live="polite">
           <h2 className="font-medium">Done</h2>
           <p className="mt-1 text-sm">
-            {result.saved} saved, {result.unchanged} unchanged (skipped), {result.failed} failed{result.cancelled && " (stopped early)"}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} files are in the browser's Downloads folder (Downloads/Cornell/…, a name clash gets "(1)"), not in the archive folder, because their file host refused a direct read; the lines below list them. Move them in if you want them together.`} Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
+            {describeRun(result)}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} files are in the browser's Downloads folder (Downloads/Cornell/…, a name clash gets "(1)"), not in the archive folder, because their file host refused a direct read; the lines below list them. Move them in if you want them together.`} Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
           </p>
           {looksBlockedByCors(result) && !layout.needsFolder && (
             <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">
