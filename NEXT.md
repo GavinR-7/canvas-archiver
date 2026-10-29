@@ -213,3 +213,9 @@ local updates, and healthy empty/49-row/terminal-header controls. HOLD remains
 pending the next independent exact-head review.
 ## T-500: feed folder moved to a Windows folder (PR `products/v2-6-windows-inbox`, base v2-5-all-exams)
 Built: `docs/SETUP.md` (feed folder `C:\Users\gavin\hq-course-inbox`, Ed note, due.json stays OFF until its own token card), one hint line on the options page, notes in README and DUE_JSON.md. HQ's nightly job reads `/mnt/c/Users/gavin/hq-course-inbox` (hq-ingest change is Builder's). Code change: that one options-page string only.
+
+## T-501 / T-503: no-key Find mode and course browser (PRs `products/v2-7-find-mode`, `products/v2-8-course-browser`)
+
+- Course chat without an AI key now returns the best matching passages with citations and bolded dates ("Find (no AI)"); the BYO-key AI mode is unchanged and optional.
+- Course browser (`browse.html`, popup button "Browse a class's files…"): click a class, folders and files with size and date, tick, "Download ticked". It plans with the archive layout and runs the incremental engine on the ticked subset, so saved-and-unchanged files are skipped and marked "saved". Ticks are remembered per course.
+- Next: Gradescope handouts in the browser tree, a search box over file names, and a "tick everything new" shortcut.

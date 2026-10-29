@@ -32,6 +32,10 @@ function openSchedule() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("schedule.html") });
 }
 
+function openBrowse() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("browse.html") });
+}
+
 function openFiles() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("files.html") });
 }
@@ -149,6 +153,13 @@ export default function App() {
             className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
           >
             Save course files…
+          </button>
+          <button
+            type="button"
+            onClick={openBrowse}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Browse a class's files…
           </button>
           <button
             type="button"
