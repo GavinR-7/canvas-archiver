@@ -33,13 +33,14 @@ import {
 import { fetchGradescopeTasks } from "@/src/gradescope/api";
 import { fetchEdTasks } from "@/src/ed/api";
 import { fetchSyllabusTasks } from "@/src/dates/syllabus";
+import { EXAM_DAYS, isExamTask } from "@/src/dates/exams";
 import { mergeTasks } from "@/src/dates/merge";
 import { loadSettings } from "@/src/sync/settings";
 import { syncDue } from "@/src/sync/run";
 import { loadClasses } from "@/src/schedule/model";
 import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
 import { hasConsent } from "@/src/consent/consent";
-import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS } from "@/src/lib/task-window";
+import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS, taskWindow, tasksInWindow } from "@/src/lib/task-window";
 import type { TaskSource } from "@/src/types/canvas";
 import type { TaskRead } from "@/src/lib/source-read";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
@@ -77,22 +78,25 @@ function describeError(error: unknown, service = "Canvas"): SnapshotError {
 /** A partial source may contribute fresh rows but cannot discard its cached rows. */
 function retainedTasks(previous: Snapshot, source: TaskSource, read: TaskRead) {
   if (read.complete) return read.tasks;
-  return [...new Map([...previous.tasks.filter((task) => task.source === source), ...read.tasks].map((task) => [task.id, task])).values()];
+  return [...new Map([...[...previous.tasks, ...(previous.exams ?? [])].filter((task) => task.source === source), ...read.tasks].map((task) => [task.id, task])).values()];
 }
 
 /** Fetch everything from Canvas and cache it. */
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
   const now = new Date();
+  const dueWindow = taskWindow(now, DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS);
+  const previousAll = [...new Map([...previous.tasks, ...(previous.exams ?? [])].map((task) => [task.id, task])).values()];
 
+  // Fetch once out to the exam horizon; retain the shared due.json window in tasks.
   // Gradescope runs alongside Canvas and fails independently. Its tasks from
   // the previous fetch are kept on failure so a flaky page doesn't blank them.
-  const gradescope = fetchGradescopeTasks(DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
+  const gradescope = fetchGradescopeTasks(EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
     (read) => ({ tasks: retainedTasks(previous, "gradescope", read), complete: read.complete, error: read.complete ? null : describeError(read.error, "Gradescope") }),
     (error: unknown) => {
       console.warn("[canvas-archiver] gradescope refresh failed", error);
       return {
-        tasks: previous.tasks.filter((task) => task.source === "gradescope"),
+        tasks: previousAll.filter((task) => task.source === "gradescope"),
         complete: false,
         error: describeError(error, "Gradescope"),
       };
@@ -103,32 +107,34 @@ async function refresh(): Promise<Snapshot> {
     // Courses first: tasks are labelled with their course name, so the lookup
     // has to exist before planner items are normalised.
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
-    const planner = await fetchUpcomingTasks(courses, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS);
-    const tasks = planner.complete ? planner.tasks : previous.tasks.filter((task) => task.source === "canvas");
+    const planner = await fetchUpcomingTasks(courses, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS);
+    const tasks = planner.complete ? planner.tasks : previousAll.filter((task) => task.source === "canvas");
 
     // Dates written in prose (syllabus, Ed announcements) are best-effort: each
     // fails alone, and its previous result is kept rather than blanking.
     const current = courses.filter((c) => !c.restricted);
-    const syllabusRead = await fetchSyllabusTasks(courses, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
+    const syllabusRead = await fetchSyllabusTasks(courses, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
       tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error,
     }));
     const unavailable = new Set(syllabusRead.unavailableCourseIds);
     const syllabus = [
-      ...previous.tasks.filter((task) => task.source === "syllabus" && unavailable.has(task.courseId)),
+      ...previousAll.filter((task) => task.source === "syllabus" && unavailable.has(task.courseId)),
       ...syllabusRead.tasks,
     ];
     const syllabusError = syllabusRead.complete ? null : describeError(syllabusRead.error, "Canvas syllabus");
-    const edRead = await fetchEdTasks(current, DEADLINE_LOOKAHEAD_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
+    const edRead = await fetchEdTasks(current, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
       tasks: [], complete: false, unavailableCourseIds: current.map((course) => course.id), error,
     }));
     const ed = retainedTasks(previous, "ed", edRead);
     const edError = edRead.complete ? null : describeError(edRead.error, "Ed Discussion");
 
     const gs = await gradescope;
+    const all = [...tasks, ...gs.tasks, ...syllabus, ...ed];
     const snapshot: Snapshot = {
       user,
       courses,
-      tasks: mergeTasks([...tasks, ...gs.tasks, ...syllabus, ...ed]),
+      tasks: mergeTasks(tasksInWindow(all, dueWindow)),
+      exams: mergeTasks(all.filter(isExamTask)),
       fetchedAt: new Date().toISOString(),
       error: planner.complete ? null : describeError(planner.error),
       gradescopeError: gs.error,
@@ -146,7 +152,8 @@ async function refresh(): Promise<Snapshot> {
     const failed: Snapshot = {
       ...previous,
       // Canvas data is stale, but a fresh Gradescope result is still good.
-      tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...gs.tasks]),
+      tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...tasksInWindow(gs.tasks, dueWindow)]),
+      exams: mergeTasks([...(previous.exams ?? []).filter((task) => task.source !== "gradescope"), ...gs.tasks.filter(isExamTask)]),
       error: describeError(error),
       gradescopeError: gs.error,
       sourceCompleteness: { canvas: false, gradescope: gs.complete, syllabus: false, ed: false },

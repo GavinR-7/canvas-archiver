@@ -16,6 +16,7 @@ import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { ED_ORIGINS } from "@/src/config/ed";
+import { examsByCourse } from "@/src/dates/exams";
 import { taskStatus } from "@/src/lib/task-status";
 import { formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
 import { useNow } from "@/src/ui/useNow";
@@ -93,6 +94,7 @@ export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
   const { tasks, error, gradescopeError, edError, fetchedAt, user } = snapshot;
+  const exams = useMemo(() => examsByCourse(snapshot.exams ?? [], snapshot.courses, now), [snapshot.exams, snapshot.courses, now]);
 
   // `now` is in the dependency list so grouping headings re-derive when the
   // clock crosses midnight, not only when the data changes.
@@ -162,6 +164,32 @@ export default function App() {
               </section>
             ))}
           </div>
+        )}
+
+        {!loading && (
+          <section className="mt-10" aria-labelledby="all-exams">
+            <h2 id="all-exams" className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+              All exams
+            </h2>
+            <div className="space-y-4">
+              {exams.map(({ course, exams: list }) => (
+                <div key={course.id}>
+                  <h3 className="mb-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    {course.courseCode || course.name}
+                  </h3>
+                  {list.length === 0 ? (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">No exam dates found.</p>
+                  ) : (
+                    <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+                      {list.map((task) => (
+                        <TaskRow key={task.id} task={task} now={now} />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
         )}
 
         <footer className="mt-10 text-xs text-zinc-400">
