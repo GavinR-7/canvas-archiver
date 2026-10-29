@@ -5,6 +5,7 @@
 
 import { getAll, getOne } from "@/src/canvas/client";
 import { AccessDeniedError, NotFoundError } from "@/src/canvas/errors";
+import { attachmentIds } from "./attachments";
 import type { CanvasDocument, CanvasFile, CanvasFolder, CanvasModule, CourseSources } from "./plan";
 
 type Raw = Record<string, unknown>;
@@ -100,6 +101,7 @@ export function normalizeAssignment(raw: Raw): CanvasDocument | null {
     html: str(raw["description"]) ?? "",
     modifiedAt: str(raw["updated_at"]),
     htmlUrl: str(raw["html_url"]),
+    attachmentIds: attachmentIds(raw["attachments"], str(raw["description"]) ?? ""),
   };
 }
 
@@ -113,6 +115,21 @@ export function normalizeAnnouncement(raw: Raw): CanvasDocument | null {
     html: str(raw["message"]) ?? "",
     modifiedAt: str(raw["posted_at"]) ?? str(raw["created_at"]),
     htmlUrl: str(raw["html_url"]),
+    attachmentIds: attachmentIds(raw["attachments"], str(raw["message"]) ?? ""),
+  };
+}
+
+export function normalizeDiscussion(raw: Raw): CanvasDocument | null {
+  const id = num(raw["id"]);
+  if (id === null) return null;
+  return {
+    kind: "discussion",
+    key: String(id),
+    title: str(raw["title"]) ?? `Discussion ${id}`,
+    html: str(raw["message"]) ?? "",
+    modifiedAt: str(raw["last_reply_at"]) ?? str(raw["posted_at"]) ?? str(raw["created_at"]),
+    htmlUrl: str(raw["html_url"]),
+    attachmentIds: attachmentIds(raw["attachments"], str(raw["message"]) ?? ""),
   };
 }
 
@@ -126,13 +143,22 @@ export function normalizePage(raw: Raw): CanvasDocument | null {
     html: str(raw["body"]) ?? "",
     modifiedAt: str(raw["updated_at"]),
     htmlUrl: str(raw["html_url"]),
+    attachmentIds: attachmentIds(null, str(raw["body"]) ?? ""),
   };
 }
 
 export function normalizeSyllabus(courseId: number, raw: Raw): CanvasDocument | null {
   const body = str(raw["syllabus_body"]);
   if (body === null) return null;
-  return { kind: "syllabus", key: String(courseId), title: "Syllabus", html: body, modifiedAt: null, htmlUrl: null };
+  return {
+    kind: "syllabus",
+    key: String(courseId),
+    title: "Syllabus",
+    html: body,
+    modifiedAt: null,
+    htmlUrl: null,
+    attachmentIds: attachmentIds(null, body),
+  };
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -180,6 +206,11 @@ export async function fetchCourseAnnouncements(courseId: number): Promise<Canvas
   return raw.map(normalizeAnnouncement).filter((d): d is CanvasDocument => d !== null);
 }
 
+export async function fetchCourseDiscussions(courseId: number): Promise<CanvasDocument[]> {
+  const raw = await tolerant(() => getAll<Raw>(`/courses/${courseId}/discussion_topics`));
+  return raw.map(normalizeDiscussion).filter((d): d is CanvasDocument => d !== null);
+}
+
 export async function fetchCourseSyllabus(courseId: number): Promise<CanvasDocument[]> {
   try {
     const course = await getOne<Raw>(`/courses/${courseId}`, { "include[]": ["syllabus_body"] });
@@ -191,16 +222,50 @@ export async function fetchCourseSyllabus(courseId: number): Promise<CanvasDocum
   }
 }
 
+/**
+ * Files a module or a page names that the course Files list did not return
+ * (the Files tab is often hidden from students while its files stay linkable).
+ * Each is asked for by id; one that Canvas refuses is reported, not fatal.
+ */
+export async function fetchMissingFiles(
+  courseId: number,
+  ids: number[],
+): Promise<{ files: CanvasFile[]; unresolved: number[] }> {
+  const read = async (id: number): Promise<CanvasFile | null> => {
+    for (const path of [`/courses/${courseId}/files/${id}`, `/files/${id}`]) {
+      try {
+        const file = normalizeFile(await getOne<Raw>(path));
+        if (file) return file;
+      } catch (error) {
+        if (!(error instanceof AccessDeniedError || error instanceof NotFoundError)) throw error;
+      }
+    }
+    return null;
+  };
+  const found = await mapLimit(ids, 4, read);
+  return {
+    files: found.filter((f): f is CanvasFile => f !== null),
+    unresolved: ids.filter((_, i) => found[i] === null),
+  };
+}
+
 /** Everything the planner needs for one course. Each source degrades to empty on its own. */
 export async function fetchCourseSources(courseId: number): Promise<CourseSources> {
-  const [modules, files, folders, pages, assignments, announcements, syllabus] = await Promise.all([
+  const [modules, listed, folders, pages, assignments, announcements, discussions, syllabus] = await Promise.all([
     fetchCourseModules(courseId),
     fetchCourseFiles(courseId),
     fetchCourseFolders(courseId),
     fetchCoursePages(courseId),
     fetchCourseAssignments(courseId),
     fetchCourseAnnouncements(courseId),
+    fetchCourseDiscussions(courseId),
     fetchCourseSyllabus(courseId),
   ]);
-  return { modules, files, folders, documents: [...syllabus, ...pages, ...assignments, ...announcements] };
+  const documents = [...syllabus, ...pages, ...assignments, ...announcements, ...discussions];
+  const known = new Set(listed.map((f) => f.id));
+  const wanted = new Set<number>();
+  for (const id of modules.flatMap((m) => m.fileIds)) if (!known.has(id)) wanted.add(id);
+  for (const id of documents.flatMap((d) => d.attachmentIds ?? [])) if (!known.has(id)) wanted.add(id);
+  const extra = await fetchMissingFiles(courseId, [...wanted]);
+  return { modules, files: [...listed, ...extra.files], folders, documents, unresolvedFileIds: extra.unresolved };
 }
