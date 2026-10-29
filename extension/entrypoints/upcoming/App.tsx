@@ -11,9 +11,11 @@
  */
 
 import { useMemo } from "react";
+import { tasksInWindow, taskWindow } from "@/src/lib/task-window";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { ED_ORIGINS } from "@/src/config/ed";
 import { taskStatus } from "@/src/lib/task-status";
 import { formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
 import { useNow } from "@/src/ui/useNow";
@@ -61,6 +63,14 @@ function TaskRow({ task, now }: { task: Task; now: Date }) {
           <span>{task.courseCode || task.courseName}</span>
           <KindBadge kind={task.kind} />
           <SourceBadge source={task.source} />
+          {task.unconfirmed && (
+            <span
+              className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+              title={`Read from text, not a Canvas date: "${task.evidence ?? ""}"`}
+            >
+              unconfirmed
+            </span>
+          )}
           {task.pointsPossible !== null && <span>{task.pointsPossible} pts</span>}
         </p>
       </div>
@@ -77,14 +87,16 @@ function TaskRow({ task, now }: { task: Task; now: Date }) {
   );
 }
 
+const ED_ORIGIN: string = ED_ORIGINS[0];
+
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
-  const { tasks, error, gradescopeError, fetchedAt, user } = snapshot;
+  const { tasks, error, gradescopeError, edError, fetchedAt, user } = snapshot;
 
   // `now` is in the dependency list so grouping headings re-derive when the
   // clock crosses midnight, not only when the data changes.
-  const groups = useMemo(() => groupByDay(tasks), [tasks, now]);
+  const groups = useMemo(() => groupByDay(tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS))), [tasks, now]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -119,6 +131,12 @@ export default function App() {
         {gradescopeError && (
           <div className="mb-6">
             <ErrorBanner error={gradescopeError} canvasOrigin={GRADESCOPE_ORIGIN} service="Gradescope" />
+          </div>
+        )}
+
+        {edError && (
+          <div className="mb-6">
+            <ErrorBanner error={edError} canvasOrigin={ED_ORIGIN} service="Ed Discussion" />
           </div>
         )}
 

@@ -10,14 +10,16 @@
  * source of silent `undefined`s.
  */
 
-import type { CanvasUser, Course, Task } from "@/src/types/canvas";
+import type { CanvasUser, Course, Task, TaskSource } from "@/src/types/canvas";
 
 /** Messages a UI surface can send to the service worker. */
 export type Request =
   /** Return whatever is cached, fetching only if nothing is. */
   | { type: "GET_SNAPSHOT" }
   /** Re-fetch from Canvas regardless of cache. */
-  | { type: "REFRESH" };
+  | { type: "REFRESH" }
+  /** Refresh, then push due.json if sync is enabled. */
+  | { type: "SYNC_NOW" };
 
 export type SnapshotErrorKind = "session-expired" | "network" | "other";
 
@@ -50,6 +52,12 @@ export interface Snapshot {
    * tasks from the previous successful fetch stay in `tasks`.
    */
   gradescopeError: SnapshotError | null;
+  /** Same for Ed Discussion. Absent in snapshots cached before Ed existed. */
+  edError?: SnapshotError | null;
+  /** Failed syllabus read; used to keep an incomplete empty export from erasing deadlines. */
+  syllabusError?: SnapshotError | null;
+  /** Affirmative results of this refresh, absent on legacy caches. Never inferred from null errors. */
+  sourceCompleteness?: Record<TaskSource, boolean>;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {

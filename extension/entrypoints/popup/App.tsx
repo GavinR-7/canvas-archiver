@@ -7,6 +7,8 @@
  * It asks the service worker for a snapshot and renders it.
  */
 
+import { UPCOMING_DAYS } from "@/src/canvas/api";
+import { taskWindow, tasksInWindow } from "@/src/lib/task-window";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { taskStatus } from "@/src/lib/task-status";
@@ -21,10 +23,24 @@ function openUpcoming() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") });
 }
 
+function openChat() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("chat.html") });
+}
+
+function openSchedule() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("schedule.html") });
+}
+
+function openFiles() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("files.html") });
+}
+
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
   const { user, courses, tasks, error, gradescopeError } = snapshot;
+
+  const upcoming = tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS));
 
   const needsAttention = tasks.filter((task) => {
     const status = taskStatus(task, now);
@@ -121,7 +137,35 @@ export default function App() {
             onClick={openUpcoming}
             className="mt-4 w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
-            Upcoming — next 14 days ({tasks.length})
+            Upcoming — next {UPCOMING_DAYS} days ({upcoming.length})
+          </button>
+          <button
+            type="button"
+            onClick={openFiles}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Save course files…
+          </button>
+          <button
+            type="button"
+            onClick={openChat}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Course chat…
+          </button>
+          <button
+            type="button"
+            onClick={openSchedule}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Week schedule…
+          </button>
+          <button
+            type="button"
+            onClick={() => void chrome.runtime.openOptionsPage()}
+            className="mt-2 w-full text-center text-xs text-zinc-500 underline underline-offset-2 hover:no-underline"
+          >
+            Settings (send deadlines to HQ)
           </button>
         </>
       )}
