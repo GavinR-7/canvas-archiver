@@ -260,3 +260,9 @@ Research T-513 found no source the extension may read for some exams: the regist
 - Becomes exam tasks with source `manual`, badge "Entered by you", never unconfirmed. The background sync adds them to `snapshot.exams`; the Upcoming page also merges them live, so an edit shows at once.
 - An entered exam wins over a parsed twin on the same day (priority above Canvas). Exported in due.json as `source: "manual"`.
 - No new permissions, no network. Not done: importing from the registrar tab (a question for Gavin in the Monday brief).
+
+## T-525: Gradescope handouts in the course browser, embedded Canvas images beside their pages (PR `products/v2-13-handouts-images`, base v2-12-manual-exams)
+
+- Browser (#20): opening a class loads its Canvas tree first, then reads only the matching Gradescope class (name/code match, never a guess) and adds its handouts under a `Gradescope` folder. Same ticks, same download run, same manifest; a handout with a record at its path shows as saved and the run still asks the host before skipping it. A hang or failure never holds up the Canvas files.
+- Images: an `<img>` whose address is relative or on the Canvas origin (`/courses/N/files/ID/preview`) is treated like a linked attachment: fetched by file id through the Canvas API, saved beside its page, the saved page's `src` pointed at it (original kept in `data-canvas-src`). Other hosts are ignored and never fetched; a file Canvas will not hand over is listed as skipped and the picture stays as it was. Applies to the archive, browser and nightly feed alike (shared plan).
+- Not done (separate): the feed default; verifying the Gradescope markup against a live account.

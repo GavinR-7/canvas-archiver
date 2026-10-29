@@ -5,7 +5,7 @@ vi.mock("@/src/canvas/client", () => ({ getAll: vi.fn(), getOne: vi.fn() }));
 import { getAll, getOne } from "@/src/canvas/client";
 import { AccessDeniedError, NotFoundError } from "@/src/canvas/errors";
 import { fetchCourseSources, fetchMissingFiles, normalizeAnnouncement, normalizeAssignment, normalizeDiscussion, normalizePage, normalizeSyllabus } from "@/src/files/api";
-import { attachmentIds, fileIdsIn, relativeLink, rewriteFileLinks } from "@/src/files/attachments";
+import { attachmentIds, fileIdsIn, imageIdsIn, relativeLink, rewriteFileLinks } from "@/src/files/attachments";
 import { buildTree, itemsUnder } from "@/src/files/browse";
 import { archiveLayout, ingestLayout } from "@/src/files/layout";
 import { emptyManifest, hashText, type CourseManifest } from "@/src/files/manifest";
@@ -27,8 +27,20 @@ describe("finding attachments", () => {
     const html = `<a href="/courses/7/files/9/download?download_frd=1">a</a><a href="https://x/y" data-api-endpoint="https://c/api/v1/courses/7/files/4">b</a><a href="/courses/7/files/9">again</a><a href="/courses/7/pages/files-12">p</a>`;
     expect(fileIdsIn(html)).toEqual([9, 4]);
   });
-  it("ignores images and plain text; only links are attachments", () => {
+  it("fileIdsIn reads links only, not images or plain text", () => {
     expect(fileIdsIn(`<img src="/courses/7/files/3/preview"> see /files/5`)).toEqual([]);
+  });
+  it("finds Canvas-hosted images, relative or on the Canvas origin, and never third-party ones", () => {
+    const html = `<img src="/courses/7/files/3/preview"><img src="https://canvas.cornell.edu/courses/7/files/4/download?verifier=x"><img src="https://evil.example/courses/7/files/5/preview"><img src="//cdn.example/files/6"><img src="data:image/png;base64,AAAA"><img src="/courses/7/files/3/preview">`;
+    expect(imageIdsIn(html)).toEqual([3, 4]);
+    expect(attachmentIds([{ id: 9 }], `<a href="/files/4">l</a>${html}`)).toEqual([9, 4, 3]);
+  });
+  it("points an embedded image at the saved copy and leaves foreign and unsaved images alone", () => {
+    const html = `<img alt="a" src="/courses/7/files/3/preview"><img src="https://evil.example/files/3/x"><img src="/courses/7/files/8/preview">`;
+    const out = rewriteFileLinks(html, new Map([[3, "pic%201.png"]]));
+    expect(out).toContain(`<img data-canvas-src="/courses/7/files/3/preview" alt="a" src="pic%201.png">`);
+    expect(out).toContain(`<img src="https://evil.example/files/3/x">`);
+    expect(out).toContain(`<img src="/courses/7/files/8/preview">`);
   });
   it("puts the API attachments array first, then HTML links, without repeats", () => {
     expect(attachmentIds([{ id: 4 }, { id: 9 }, { nope: 1 }], `<a href="/files/9">x</a><a href="/files/12">y</a>`)).toEqual([4, 9, 12]);
@@ -189,5 +201,43 @@ describe("fetching files the Files list did not return", () => {
     expect(out.files.map((f) => f.id).sort((a, b) => a - b)).toEqual([5, 6, 101]);
     expect(out.documents.map((d) => d.kind).sort()).toEqual(["assignment", "discussion"]);
     expect(out.unresolvedFileIds).toEqual([]);
+  });
+});
+
+describe("embedded Canvas images", () => {
+  const img = `<p>Figure:</p><img src="/courses/7/files/201/preview" alt="fig"><img src="https://tracker.example/files/202/pixel.png"><a href="/courses/7/files/101">hw</a>`;
+  const page = (over: Partial<CanvasDocument> = {}) => hw({ html: img, attachmentIds: attachmentIds(null, img), ...over });
+  it("lists the Canvas image after the linked file and ignores the third-party one", () => {
+    expect(page().attachmentIds).toEqual([101, 201]);
+  });
+  it("saves the image beside its page and points the saved page at the copy", () => {
+    const plan = planCourse(course, sources({ files: [file(101, "Homework7-1.pdf"), file(201, "fig 1.png")], documents: [page()] }));
+    expect(plan.items.map((i) => i.path.slice(2).join("/"))).toEqual(["Assignments/fig 1.png", "Assignments/Homework 7.html", "Assignments/Homework7-1.pdf"]);
+    const html = plan.items.find((i) => i.content)?.content ?? "";
+    expect(html).toContain(`src="fig%201.png"`);
+    expect(html).toContain(`data-canvas-src="/courses/7/files/201/preview"`);
+    expect(html).toContain(`src="https://tracker.example/files/202/pixel.png"`);
+  });
+  it("is skipped, with the picture left as it was, when the host will not hand the file over", () => {
+    const plan = planCourse(course, sources({ files: [file(101, "Homework7-1.pdf")], documents: [page()], unresolvedFileIds: [201] }));
+    expect(plan.skipped).toEqual([{ source: "canvas:file/201", name: "file 201", reason: "unavailable" }]);
+    expect(plan.items.find((i) => i.content)?.content).toContain(`src="/courses/7/files/201/preview"`);
+  });
+  it("only ever asks Canvas for ids it was given, never a third-party address", async () => {
+    vi.mocked(getAll).mockReset();
+    vi.mocked(getOne).mockReset();
+    vi.mocked(getAll).mockImplementation(async (path: string) => {
+      if (path.endsWith("/pages")) return [{ url: "p", title: "P", updated_at: "t" }] as never;
+      return [] as never;
+    });
+    vi.mocked(getOne).mockImplementation(async (path: string) => {
+      if (path.includes("/pages/p")) return { url: "p", title: "P", body: img, updated_at: "t" } as never;
+      if (path.includes("/files/")) return { id: Number(/files\/(\d+)/.exec(path)?.[1]), display_name: "x.png", filename: "x.png", url: "https://canvas.example/f", size: 1, updated_at: "t", locked: false } as never;
+      return {} as never;
+    });
+    await fetchCourseSources(7);
+    const asked = vi.mocked(getOne).mock.calls.map((c) => String(c[0])).filter((p) => p.includes("/files/"));
+    expect(asked.some((p) => p.includes("202"))).toBe(false);
+    expect(asked.some((p) => p.includes("201"))).toBe(true);
   });
 });

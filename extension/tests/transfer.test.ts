@@ -29,6 +29,47 @@ const deps = (fetchFn: typeof fetch, download: TransferDeps["download"] = null):
   return { fetch: fetchFn, download, sleep: async (ms) => void slept.push(ms), canvasOrigin: "https://canvas.cornell.edu", slept };
 };
 
+describe("embedded images (T-532)", () => {
+  const image = (url: string): PlannedItem => ({ ...item(url), imageOnly: true });
+  const redirect = (to: string) => () => new Response(null, { status: 302, headers: { location: to } });
+
+  it("refuses an off-origin metadata address with zero requests, and never uses the downloader", async () => {
+    const h = host([ok]);
+    const download = vi.fn();
+    await expect(acquireCanvasFile(image("https://third-party.example/files/9/download?verifier=x"), deps(h.fetchFn, download), true)).rejects.toThrow(/image unavailable/);
+    expect(h.calls).toHaveLength(0);
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("refuses a redirect to another host and does not request it", async () => {
+    const h = host([redirect("https://third-party.example/pixel.png"), ok]);
+    await expect(acquireCanvasFile(image(item().url as string), deps(h.fetchFn), true)).rejects.toThrow(/another host/);
+    expect(h.calls.map((c) => c.url)).toEqual([item().url]);
+  });
+
+  it("follows a same-origin redirect, without credentials, and streams the image", async () => {
+    const h = host([redirect("/files/9/download?x=1"), ok]);
+    expect(await acquireCanvasFile(image(item().url as string), deps(h.fetchFn), true)).toMatchObject({ how: "stream" });
+    expect(h.calls.map((c) => c.credentials)).toEqual(["omit", "omit"]);
+  });
+
+  it("does not fall back to the downloader or the session when Canvas refuses", async () => {
+    const h = host([() => status(403)]);
+    const download = vi.fn();
+    await expect(acquireCanvasFile(image(item().url as string), deps(h.fetchFn, download), true)).rejects.toThrow(/image unavailable: Canvas answered 403/);
+    expect(download).not.toHaveBeenCalled();
+    expect(h.calls.every((c) => c.credentials === "omit")).toBe(true);
+  });
+
+  it("marks only image-only files in the plan", () => {
+    const f = (id: number) => ({ id, displayName: `f${id}.png`, filename: `f${id}.png`, size: 1, updatedAt: "t", url: "https://x/y", locked: false, folderId: null, contentType: "image/png" });
+    const doc = { kind: "page" as const, key: "p", title: "P", html: "", modifiedAt: null, htmlUrl: null, attachmentIds: [1, 2], imageOnlyIds: [1] };
+    const plan = planCourse({ id: 7, name: "C", courseCode: "CS 3700" }, { modules: [], files: [f(1), f(2)] as never, folders: [], documents: [doc] });
+    const flagged = Object.fromEntries(plan.items.filter((i) => i.url).map((i) => [i.source, i.imageOnly === true]));
+    expect(flagged).toEqual({ "canvas:file/1": true, "canvas:file/2": false });
+  });
+});
+
 describe("acquireCanvasFile", () => {
   it("reads directly without credentials when the host allows it", async () => {
     const h = host([ok]);

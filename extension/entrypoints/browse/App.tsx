@@ -5,12 +5,14 @@
  * It plans the course exactly as the full archive does (same folders, same
  * manifest), so a ticked item lands where the archive would put it and is
  * skipped when it is already saved and unchanged. Ticks are remembered per
- * course. Canvas only; read-only; the same folder and permissions as Files.
+ * course. Canvas files, plus the class's Gradescope handouts when they load; read-only; the same folder and permissions as Files.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { fetchCourseSources } from "@/src/files/api";
+import { fetchGradescopeFiles, LISTING_BUDGET_MS } from "@/src/gradescope/api";
+import { handoutsFor, matchCanvasCourse } from "@/src/gradescope/files";
 import {
   buildTree,
   loadSelection,
@@ -123,6 +125,7 @@ export default function App() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const openGeneration = useRef(0);
 
   useEffect(() => {
     void (async () => {
@@ -139,29 +142,40 @@ export default function App() {
       setResult(null);
       setProblem(null);
       setReading(true);
+      const generation = ++openGeneration.current;
       try {
         const sources = await fetchCourseSources(next.id);
-        const built = planCourses([{ course: next, sources }], archiveLayout, await loadDirBindings(archiveLayout.id))[0] as CoursePlan;
-        setPlan(built);
-        setSelected(pruneSelection(await loadSelection(next.id), built));
-        setSaved(new Set());
-        setInDownloads(new Set());
-        if (root && access === "granted") {
-          try {
-            const manifest = await folderManifestStore(folderSink(root)).load(built);
-            setSaved(savedSources(built, manifest));
-            setInDownloads(downloadsSources(built, manifest));
-          } catch {
-            // No readable manifest (new folder, or another course's): nothing is marked saved.
+        const bound = await loadDirBindings(archiveLayout.id);
+        const show = async (built: CoursePlan) => {
+          setPlan(built);
+          setSelected(pruneSelection(await loadSelection(next.id), built));
+          setSaved(new Set());
+          setInDownloads(new Set());
+          if (root && access === "granted") {
+            try {
+              const manifest = await folderManifestStore(folderSink(root)).load(built);
+              setSaved(savedSources(built, manifest));
+              setInDownloads(downloadsSources(built, manifest));
+            } catch {
+              // No readable manifest (new folder, or another course's): nothing is marked saved.
+            }
           }
-        }
+        };
+        await show(planCourses([{ course: next, sources }], archiveLayout, bound)[0] as CoursePlan);
+        // Gradescope handouts join the same tree when they arrive. Optional: a hang or a failure never holds up Canvas files.
+        void fetchGradescopeFiles(new Date(), undefined, LISTING_BUDGET_MS, (g) => matchCanvasCourse(g, allCourses)?.id === next.id).then(async (listing) => {
+          if (generation !== openGeneration.current) return; // another class was opened meanwhile
+          const external = handoutsFor(listing, next, allCourses);
+          if (external.length === 0) return;
+          await show(planCourses([{ course: next, sources: { ...sources, external } }], archiveLayout, bound)[0] as CoursePlan);
+        });
       } catch (error) {
         setProblem(`Could not read this course from Canvas: ${(error as Error).message}`);
       } finally {
         setReading(false);
       }
     },
-    [root, access],
+    [root, access, allCourses],
   );
 
   const select = useCallback(
