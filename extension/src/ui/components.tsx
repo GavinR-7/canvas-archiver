@@ -32,7 +32,7 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
 /** Shown only for sources other than Canvas, which is the unmarked default. */
 export function SourceBadge({ source }: { source: Task["source"] }) {
   if (source === "canvas") return null;
-  const label = { gradescope: "Gradescope", ed: "Ed", syllabus: "Syllabus" }[source];
+  const label = { gradescope: "Gradescope", ed: "Ed", syllabus: "Syllabus", manual: "Entered by you" }[source];
   return (
     <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">
       {label}

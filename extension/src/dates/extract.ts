@@ -69,6 +69,24 @@ export function zonedToUtc(y: number, m: number, d: number, h: number, mi: numbe
   return new Date(guess);
 }
 
+export type WallTime = { status: "ok" | "ambiguous"; date: Date } | { status: "gap"; date: null };
+
+/**
+ * A wall-clock time in `tz`, checked rather than guessed. A time the clocks skip (02:30 on the spring-forward
+ * night) is a "gap" and has no instant. A time that happens twice (01:30 on the fall-back night) is "ambiguous"
+ * and resolves to the earlier occurrence, the daylight-time one, so the caller can say which it used.
+ */
+export function resolveWallTime(y: number, m: number, d: number, h: number, mi: number, tz: string = TIME_ZONE): WallTime {
+  const wall = Date.UTC(y, m - 1, d, h, mi);
+  const candidates = new Set<number>();
+  for (const probe of [wall - 86_400_000, wall + 86_400_000]) {
+    const at = wall - offsetMs(probe, tz);
+    if (wall === at + offsetMs(at, tz)) candidates.add(at);
+  }
+  if (candidates.size === 0) return { status: "gap", date: null };
+  return { status: candidates.size > 1 ? "ambiguous" : "ok", date: new Date(Math.min(...candidates)) };
+}
+
 function validDay(y: number, m: number, d: number): boolean {
   const date = new Date(Date.UTC(y, m - 1, d));
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;

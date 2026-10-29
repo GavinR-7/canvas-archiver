@@ -10,13 +10,14 @@
  * and grouped by local calendar day.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { tasksInWindow, taskWindow } from "@/src/lib/task-window";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { ED_ORIGINS } from "@/src/config/ed";
 import { examsByCourse } from "@/src/dates/exams";
+import { loadManualExams, MANUAL_EXAMS_KEY, withManualExams, type ManualExams } from "@/src/dates/manual-exams";
 import { taskStatus } from "@/src/lib/task-status";
 import { formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
 import { useNow } from "@/src/ui/useNow";
@@ -94,7 +95,18 @@ export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
   const { tasks, error, gradescopeError, edError, fetchedAt, user } = snapshot;
-  const exams = useMemo(() => examsByCourse(snapshot.exams ?? [], snapshot.courses, now), [snapshot.exams, snapshot.courses, now]);
+  // Dates typed in settings show at once, without waiting for the next sync.
+  const [manual, setManual] = useState<ManualExams>({});
+  useEffect(() => {
+    void loadManualExams().then(setManual);
+    const onChange = (changes: Record<string, unknown>) => { if (MANUAL_EXAMS_KEY in changes) void loadManualExams().then(setManual); };
+    chrome.storage.onChanged.addListener(onChange);
+    return () => chrome.storage.onChanged.removeListener(onChange);
+  }, []);
+  const exams = useMemo(
+    () => examsByCourse(withManualExams(snapshot.exams ?? [], manual, snapshot.courses), snapshot.courses, now),
+    [snapshot.exams, snapshot.courses, manual, now],
+  );
 
   // `now` is in the dependency list so grouping headings re-derive when the
   // clock crosses midnight, not only when the data changes.

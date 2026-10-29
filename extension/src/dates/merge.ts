@@ -11,7 +11,7 @@ import { TIME_ZONE } from "./extract";
 import type { Task } from "@/src/types/canvas";
 import { byDueDate } from "@/src/lib/task-status";
 
-const PRIORITY: Record<Task["source"], number> = { canvas: 0, gradescope: 1, ed: 2, syllabus: 3 };
+const PRIORITY: Record<Task["source"], number> = { manual: -1, canvas: 0, gradescope: 1, ed: 2, syllabus: 3 };
 const STOP = new Set(["the", "a", "an", "of", "and", "for", "in", "on", "at", "to", "exam", "due", "pm", "am"]);
 
 export const courseKey = (code: string) => code.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -28,7 +28,10 @@ function tokens(title: string): Set<string> {
 
 export function sameDeadline(a: Task, b: Task): boolean {
   if (!a.dueAt || !b.dueAt) return false;
-  if (courseKey(a.courseCode) !== courseKey(b.courseCode) || !courseKey(a.courseCode)) return false;
+  // A date the person typed belongs to one Canvas course: two courses can share a catalog code, so only the id matches.
+  if (a.source === "manual" || b.source === "manual") {
+    if (a.courseId !== b.courseId) return false;
+  } else if (courseKey(a.courseCode) !== courseKey(b.courseCode) || !courseKey(a.courseCode)) return false;
   if (easternDay(a.dueAt) !== easternDay(b.dueAt)) return false;
   if (EXAM_WORD.test(a.title) && EXAM_WORD.test(b.title)) return true;
   const ta = tokens(a.title);
