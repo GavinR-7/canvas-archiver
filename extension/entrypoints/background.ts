@@ -31,8 +31,10 @@ import {
   type SnapshotError,
 } from "@/src/lib/messages";
 import { fetchGradescopeTasks } from "@/src/gradescope/api";
-import { fetchEdTasks } from "@/src/ed/api";
+import { fetchEdTasks, type EdResult } from "@/src/ed/api";
 import { fetchSyllabusTasks } from "@/src/dates/syllabus";
+import { syllabusFileTasks } from "@/src/dates/syllabus-files";
+import { browserSyllabusDeps } from "@/src/dates/syllabus-reader";
 import { EXAM_DAYS, isExamTask } from "@/src/dates/exams";
 import { mergeTasks } from "@/src/dates/merge";
 import { loadSettings } from "@/src/sync/settings";
@@ -116,17 +118,26 @@ async function refresh(): Promise<Snapshot> {
     const syllabusRead = await fetchSyllabusTasks(courses, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
       tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error,
     }));
+    // File dates remain best-effort locally; a known unreadable file cannot certify deletion.
+    const syllabusFiles = await syllabusFileTasks(current, EXAM_DAYS, browserSyllabusDeps(), now).catch(() => ({
+      tasks: [], unreadable: 1,
+    }));
     const unavailable = new Set(syllabusRead.unavailableCourseIds);
     const syllabus = [
-      ...previousAll.filter((task) => task.source === "syllabus" && unavailable.has(task.courseId)),
+      ...previousAll.filter((task) => task.source === "syllabus" && (syllabusFiles.unreadable > 0 || unavailable.has(task.courseId))),
       ...syllabusRead.tasks,
+      ...syllabusFiles.tasks,
     ];
-    const syllabusError = syllabusRead.complete ? null : describeError(syllabusRead.error, "Canvas syllabus");
-    const edRead = await fetchEdTasks(current, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
-      tasks: [], complete: false, unavailableCourseIds: current.map((course) => course.id), error,
+    const syllabusComplete = syllabusRead.complete && syllabusFiles.unreadable === 0;
+    const syllabusError = !syllabusRead.complete ? describeError(syllabusRead.error, "Canvas syllabus")
+      : syllabusFiles.unreadable > 0 ? { kind: "other" as const, message: "Some syllabus files could not be read. Cached dates were kept." } : null;
+    const edRead = await fetchEdTasks(current, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): EdResult => ({
+      tasks: [], complete: false, unavailableCourseIds: current.map((course) => course.id), error, missed: [],
     }));
     const ed = retainedTasks(previous, "ed", edRead);
-    const edError = edRead.complete ? null : describeError(edRead.error, "Ed Discussion");
+    const edError = edRead.complete ? null : edRead.missed?.length
+      ? { kind: "other" as const, message: "Ed Discussion data is missing for " + edRead.missed.join(", ") + ". The other courses are up to date." }
+      : describeError(edRead.error, "Ed Discussion");
 
     const gs = await gradescope;
     const all = [...tasks, ...gs.tasks, ...syllabus, ...ed];
@@ -140,7 +151,7 @@ async function refresh(): Promise<Snapshot> {
       gradescopeError: gs.error,
       edError,
       syllabusError,
-      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusRead.complete, ed: edRead.complete },
+      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusComplete, ed: edRead.complete },
     };
     await saveSnapshot(snapshot);
     return snapshot;

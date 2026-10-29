@@ -29,10 +29,10 @@ export class EdSessionExpiredError extends SessionExpiredError {
   }
 }
 
-async function getJson(path: string): Promise<Raw> {
+async function getJson(path: string, global = false): Promise<Raw> {
   const url = assertCanvasOrigin(`${ED_API_ORIGIN}${path}`, ED_API_ORIGIN);
   const response = await fetch(url, { method: "GET", credentials: "include", headers: { Accept: "application/json" } });
-  if (response.status === 401 || response.status === 403) throw new EdSessionExpiredError();
+  if (global && (response.status === 401 || response.status === 403)) throw new EdSessionExpiredError();
   if (parseLinkHeader(response.headers.get("link")).next) throw new CanvasError("Ed returned an unread next page.");
   if (!response.ok) throw new CanvasError(`Ed returned ${response.status} for ${path}.`);
   return (await response.json()) as Raw;
@@ -167,14 +167,28 @@ function hasContinuation(raw: Raw, count: number, nested = false): boolean {
   return false;
 }
 
+export interface EdResult extends TaskRead {
+  /** Unreadable courses are reported once without preventing the other courses from loading. */
+  missed: string[];
+}
+
 /** Positive completion requires recognized collections and every relevant row. */
-export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date(), overdueDays = 1): Promise<TaskRead> {
+export async function fetchEdTasks(courses: Course[], windowDays: number, now: Date = new Date(), overdueDays = 1): Promise<EdResult> {
   const tasks: Task[] = [];
+  const missed: string[] = [];
+  const unavailableCourseIds: number[] = [];
+  let firstError: unknown = null;
+  let edCourses: EdCourse[];
   try {
-    const edCourses = checkedCourses(await getJson("/api/user"));
-    for (const ed of edCourses) {
-      const course = matchCourse(ed, courses);
-      if (!course) continue;
+    edCourses = checkedCourses(await getJson("/api/user", true));
+  } catch (error) {
+    if (error instanceof SessionExpiredError) throw error;
+    return { tasks, complete: false, unavailableCourseIds: courses.map((course) => course.id), error, missed };
+  }
+  for (const ed of edCourses) {
+    const course = matchCourse(ed, courses);
+    if (!course) continue;
+    try {
       const page = await getJson("/api/courses/" + ed.id + "/threads?limit=" + THREAD_LIMIT + "&sort=new");
       const threads = checkedThreads(page);
       for (const thread of threads.filter(worthReading)) {
@@ -183,9 +197,11 @@ export async function fetchEdTasks(courses: Course[], windowDays: number, now: D
       }
       // Parsed rows may update the local view, but cannot authorize remote deletion.
       if (hasContinuation(page, threads.length)) throw new CanvasError("Ed's thread page is saturated or has unread results.");
+    } catch (error) {
+      missed.push(course.courseCode || course.name);
+      unavailableCourseIds.push(course.id);
+      firstError ??= error;
     }
-    return { tasks, complete: true, unavailableCourseIds: [], error: null };
-  } catch (error) {
-    return { tasks, complete: false, unavailableCourseIds: courses.map((course) => course.id), error };
   }
+  return { tasks, complete: unavailableCourseIds.length === 0, unavailableCourseIds, error: firstError, missed };
 }

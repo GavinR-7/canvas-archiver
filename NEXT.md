@@ -244,3 +244,11 @@ Gap: Gavin's CS3700 and HIST archive failed 72 of 152 saves with "blocked: the f
 - The downloader uses `conflictAction: "uniquify"`, never overwrites, and returns where the file really landed (`Cornell/<course>/x (1).pdf`).
 - A file saved that way is recorded `method: "downloads"` with `savedTo` and reported as "saved to Downloads, not in the archive folder"; the next run does not re-download it (no "(1)" pile) but reports it as in Downloads, never as present in the folder. Files and Browse list these and Browse marks them "in Downloads, not the archive folder".
 - `chrome.downloads.erase` removes the history record (which holds the signed address) on success and on failure; every error text is scrubbed of addresses and query strings. Regressions use a `verifier=SECRET` rejection.
+
+## T-512: exam dates from syllabus files, one Ed notice (PR `products/v2-11-syllabus-exams`, base v2-10-blocked-files)
+
+- `src/dates/syllabus-files.ts` + `syllabus-reader.ts`: once per sync, for each current-term course, the files its syllabus page links plus Files named "syllabus" are read (PDF text through `unpdf`, a worker-free build of pdf.js, bundled; plain text/HTML too), their exam/prelim/final dates go into `snapshot.exams` as unconfirmed "syllabus" tasks linked to the file. A file is read again only when its Canvas modified time changes (candidates cached in `chrome.storage.local`). A file that cannot be read (file host refuses a direct read, scanned PDF) adds nothing; nothing is invented, "Final exam: to be announced" stays dateless.
+- `extract.ts` now joins a short exam label with a date on the next line (how PDF text lays out a schedule).
+- Ed: a sign-in problem still stops at once with one notice; any other failure skips only that course and the sync shows a single "Ed Discussion data is missing for X, Y" notice instead of losing every course.
+- Limit: bytes are read in the background worker, so a syllabus PDF behind a file host that refuses direct reads (the T-510 cases) is not parsed there; the manual per-course exam-dates field (T-519) covers those.
+- Cost: pdf.js is inlined in `background.js` (1.66 MB, a service worker cannot lazy-load a chunk); unpacked build 2.1 MB.
