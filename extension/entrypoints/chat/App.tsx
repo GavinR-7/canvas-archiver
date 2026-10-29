@@ -16,6 +16,8 @@ import { archiveLayout } from "@/src/files/layout";
 import { planCourse } from "@/src/files/plan";
 import { buildUser, citationsIn, SYSTEM, type Citation } from "@/src/chat/prompt";
 import { buildIndex, chunkDoc, search, type Chunk, type Hit, type Index } from "@/src/chat/retrieve";
+import { ShowAllCourses } from "@/src/ui/components";
+import { useCourseFilter } from "@/src/ui/useCourseFilter";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
 interface Turn {
@@ -30,9 +32,11 @@ const button =
 
 export default function App() {
   const { snapshot } = useSnapshot();
-  const courses = snapshot.courses.filter((c) => !c.restricted);
+  const unrestricted = useMemo(() => snapshot.courses.filter((c) => !c.restricted), [snapshot.courses]);
+  const filter = useCourseFilter("chat", unrestricted);
+  const courses = filter.courses;
   const [courseId, setCourseId] = useState<number | null>(null);
-  const course = courses.find((c) => c.id === (courseId ?? courses[0]?.id)) ?? null;
+  const course = courses.find((c) => c.id === courseId) ?? courses[0] ?? null;
   const [index, setIndex] = useState<{ courseId: number; index: Index; docs: number; files: number } | null>(null);
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -125,6 +129,7 @@ export default function App() {
         >
           {courses.map((c) => <option key={c.id} value={c.id}>{c.courseCode || c.name}</option>)}
         </select>
+        <ShowAllCourses hiddenCount={filter.hidden.length} showAll={filter.showAll} onToggle={filter.toggle} />
         <button type="button" className={button} disabled={busy || !course} onClick={load}>
           {index?.courseId === course?.id ? "Reload course text" : "Load course text"}
         </button>

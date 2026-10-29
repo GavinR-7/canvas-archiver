@@ -13,7 +13,8 @@ import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
 import { taskStatus } from "@/src/lib/task-status";
 import { describeDue } from "@/src/lib/time";
-import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
+import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
+import { useCourseFilter } from "@/src/ui/useCourseFilter";
 import { useNow } from "@/src/ui/useNow";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
@@ -38,7 +39,9 @@ function openFiles() {
 export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
-  const { user, courses, tasks, error, gradescopeError } = snapshot;
+  const { user, tasks, error, gradescopeError } = snapshot;
+  const filter = useCourseFilter("popup", snapshot.courses);
+  const courses = filter.courses;
 
   const upcoming = tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS));
 
@@ -131,6 +134,7 @@ export default function App() {
               ))}
             </ul>
           )}
+          <ShowAllCourses hiddenCount={filter.hidden.length} showAll={filter.showAll} onToggle={filter.toggle} />
 
           <button
             type="button"
