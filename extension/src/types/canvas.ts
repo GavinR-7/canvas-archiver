@@ -83,14 +83,14 @@ export interface Course {
  * These three are the things that carry a due date. Pages, files and
  * announcements never do, so they are not tasks.
  */
-export type TaskKind = "assignment" | "quiz" | "discussion";
+export type TaskKind = "assignment" | "quiz" | "discussion" | "exam";
 
 /**
  * Which system a task came from. Canvas is not the only place coursework is
  * posted: some courses (CS 3700 at Cornell) publish assignments only on
  * Gradescope, which has no public API for students.
  */
-export type TaskSource = "canvas" | "gradescope";
+export type TaskSource = "canvas" | "gradescope" | "ed" | "syllabus" | "manual";
 
 /** Canvas's `workflow_state` for the current user's submission. */
 export type SubmissionWorkflowState =
@@ -179,6 +179,11 @@ export interface Task {
   lockedForUser: boolean;
 
   submission: TaskSubmission | null;
+
+  /** True for dates read out of prose (syllabus, Ed posts): a guess until the person confirms it. */
+  unconfirmed?: boolean;
+  /** The sentence an unconfirmed date was read from. */
+  evidence?: string;
 
   /** Fields that exist for only one kind, kept rather than discarded. */
   quiz?: {

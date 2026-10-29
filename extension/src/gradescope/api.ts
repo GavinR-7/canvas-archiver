@@ -11,10 +11,13 @@
 import { SessionExpiredError, CanvasError } from "@/src/canvas/errors";
 import { currentTermCode, termSortKey } from "@/src/canvas/terms";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
+import type { TaskRead } from "@/src/lib/source-read";
 import type { Task } from "@/src/types/canvas";
 import { assertCanvasOrigin } from "@/src/canvas/url-guard";
-import { parseAssignments, parseCourses, type GradescopeCourse } from "./parse";
+import { listGradescopeFiles, type GradescopeListing } from "./files";
+import { parseCourses, recognizedAssignments, recognizedCourses, type GradescopeCourse } from "./parse";
 
 export class GradescopeSessionExpiredError extends SessionExpiredError {
   constructor() {
@@ -23,7 +26,12 @@ export class GradescopeSessionExpiredError extends SessionExpiredError {
   }
 }
 
-async function getHtml(path: string): Promise<{ html: string; url: string }> {
+/** One Gradescope page may take this long; a hung request must not hold the UI. */
+export const REQUEST_TIMEOUT_MS = 15_000;
+/** The whole optional listing (every page of every course) gets this long. */
+export const LISTING_BUDGET_MS = 60_000;
+
+export async function getHtml(path: string, signal?: AbortSignal): Promise<{ html: string; url: string }> {
   const url = assertCanvasOrigin(`${GRADESCOPE_ORIGIN}${path}`, GRADESCOPE_ORIGIN);
 
   const response = await fetch(url, {
@@ -31,6 +39,8 @@ async function getHtml(path: string): Promise<{ html: string; url: string }> {
     credentials: "include",
     headers: { Accept: "text/html" },
     redirect: "follow",
+    // Covers reading the body too, so a stalled response cannot outlive the timeout.
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   // Signed-out requests are redirected to /login (or /saml SSO hops).
@@ -60,29 +70,72 @@ export function currentCourses(courses: GradescopeCourse[], now: Date): Gradesco
 export async function fetchGradescopeTasks(
   days: number,
   now: Date = new Date(),
-): Promise<Task[]> {
-  const { html } = await getHtml("/account");
-  const courses = parseCourses(html);
-
-  // An authenticated account page always has at least the course list
-  // container; zero courses with no error is a layout change or a landing page.
-  if (courses.length === 0 && !/courseList/.test(html)) {
-    throw new GradescopeSessionExpiredError();
-  }
-
-  const end = now.getTime() + days * 24 * 60 * 60 * 1000;
+  overdueDays = 0,
+): Promise<TaskRead> {
   const tasks: Task[] = [];
-
-  for (const course of currentCourses(courses, now)) {
-    const page = await getHtml(`/courses/${course.id}`);
-    tasks.push(...parseAssignments(page.html, course));
+  const window = taskWindow(now, days, overdueDays);
+  try {
+    const { html } = await getHtml("/account");
+    const courses = recognizedCourses(html);
+    const current = currentCourses(courses, now);
+    if (courses.length > 0 && current.length === 0) throw new CanvasError("Gradescope course terms were not recognized.");
+    for (const course of current) {
+      const page = await getHtml("/courses/" + course.id);
+      tasks.push(...recognizedAssignments(page.html, course));
+    }
+    return { tasks: tasks.filter((task) => inTaskWindow(task.dueAt, window)).sort(byDueDate), complete: true, unavailableCourseIds: [], error: null };
+  } catch (error) {
+    return { tasks: tasks.filter((task) => inTaskWindow(task.dueAt, window)).sort(byDueDate), complete: false, unavailableCourseIds: [], error };
   }
+}
 
-  return tasks
-    .filter((task) => {
-      if (!task.dueAt) return false;
-      const due = new Date(task.dueAt).getTime();
-      return due >= now.getTime() && due <= end;
-    })
-    .sort(byDueDate);
+/**
+ * Handouts for the file archive. Never throws and never outlasts `budgetMs`:
+ * any failure, a signed-out session, or a request that never answers comes back
+ * in `errors` (with whatever was listed before it) so Canvas files are unaffected.
+ * The deadline is enforced twice: it aborts the in-flight fetch, and it ends the
+ * wait even if something ignores the abort.
+ */
+export async function fetchGradescopeFiles(
+  now: Date = new Date(),
+  signal?: AbortSignal,
+  budgetMs: number = LISTING_BUDGET_MS,
+  /** Read only the courses this accepts (the course browser wants one class, not all of them). */
+  include: (course: GradescopeCourse) => boolean = () => true,
+): Promise<GradescopeListing> {
+  const listing: GradescopeListing = { courses: [], errors: [] };
+  const budget = new AbortController();
+  const stop = () => budget.abort();
+  signal?.addEventListener("abort", stop);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      listing.errors.push(`Gradescope did not answer within ${Math.round(budgetMs / 1000)}s`);
+      stop();
+      resolve();
+    }, budgetMs);
+  });
+
+  const work = (async () => {
+    try {
+      const { html } = await getHtml("/account", budget.signal);
+      const courses = parseCourses(html);
+      if (courses.length === 0 && !/courseList/.test(html)) throw new GradescopeSessionExpiredError();
+      await listGradescopeFiles(
+        currentCourses(courses, now).filter(include),
+        async (path) => (await getHtml(path, budget.signal)).html,
+        budget.signal,
+        listing,
+      );
+    } catch (error) {
+      listing.errors.push((error as Error).message);
+    }
+  })();
+
+  await Promise.race([work, deadline]);
+  clearTimeout(timer);
+  signal?.removeEventListener("abort", stop);
+  // Detach: a late settle must not mutate what the caller now holds.
+  return { courses: [...listing.courses], errors: [...listing.errors] };
 }
