@@ -29,16 +29,16 @@ async function refresh() {
 }
 
 describe("background scheduler window", () => {
-  it("supplies every source with the same clock and seven-past/sixty-ahead window", async () => {
+  it("supplies every source with a shared clock, seven overdue days and the 240-day exam horizon", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-10-25T12:00:00Z");
     vi.setSystemTime(now);
     const result = await refresh();
     expect(result.fetchedAt).toBe(now.toISOString());
-    expect(mocks.canvas).toHaveBeenCalledWith([], 60, now, 7);
-    expect(mocks.gradescope).toHaveBeenCalledWith(60, now, 7);
-    expect(mocks.syllabus).toHaveBeenCalledWith([], 60, now, 7);
-    expect(mocks.ed).toHaveBeenCalledWith([], 60, now, 7);
+    expect(mocks.canvas).toHaveBeenCalledWith([], 240, now, 7);
+    expect(mocks.gradescope).toHaveBeenCalledWith(240, now, 7);
+    expect(mocks.syllabus).toHaveBeenCalledWith([], 240, now, 7);
+    expect(mocks.ed).toHaveBeenCalledWith([], 240, now, 7);
     expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ syllabusError: null }));
   });
   it("records a syllabus failure while preserving a usable Canvas snapshot", async () => {

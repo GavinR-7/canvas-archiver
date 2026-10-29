@@ -36,7 +36,7 @@ export interface SyllabusFileDeps {
 
 export interface SyllabusFilesResult {
   tasks: Task[];
-  /** Files that could not be read this sync (shown once, not per course). */
+  /** Files or course file listings that could not be read this sync (shown once). */
   unreadable: number;
 }
 
@@ -48,10 +48,11 @@ export async function syllabusFileTasks(
   windowDays: number,
   deps: SyllabusFileDeps,
   now: Date = new Date(),
+  overdueDays = 1,
 ): Promise<SyllabusFilesResult> {
   const tasks: Task[] = [];
   let unreadable = 0;
-  const from = now.getTime() - DAY_MS;
+  const from = now.getTime() - overdueDays * DAY_MS;
   const to = now.getTime() + windowDays * DAY_MS;
 
   for (const course of courses) {
@@ -59,6 +60,7 @@ export async function syllabusFileTasks(
     try {
       files = await deps.listFiles(course);
     } catch {
+      unreadable++;
       continue;
     }
     for (const file of files.filter((f) => SUPPORTED.test(f.name))) {

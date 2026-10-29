@@ -69,6 +69,8 @@ async function run(probe?: Probe) {
     if (url.pathname.endsWith("/courses")) return json([{ id: 1, name: "Fixture", course_code: "CS 1234" }]);
     if (url.pathname.endsWith("/planner/items")) return json([]);
     if (url.pathname.endsWith("/courses/1")) return json({ syllabus_body: "" });
+    // The integrated syllabus-file reader also lists files; this fixture has none.
+    if (/\/courses\/\d+\/files$/.test(url.pathname)) return json([]);
     throw new Error("Unexpected synthetic URL");
   }));
   await import("@/entrypoints/background");

@@ -58,8 +58,8 @@ export interface Snapshot {
   edError?: SnapshotError | null;
   /** Failed syllabus read; used to keep an incomplete empty export from erasing deadlines. */
   syllabusError?: SnapshotError | null;
-  /** Affirmative results of this refresh, absent on legacy caches. Never inferred from null errors. */
-  sourceCompleteness?: Record<TaskSource, boolean>;
+  /** Affirmative remote-source results; manual dates are local. Never inferred from null errors. Absent on legacy caches. */
+  sourceCompleteness?: Record<Exclude<TaskSource, "manual">, boolean>;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {

@@ -88,3 +88,7 @@ Deliberately not built, and listed here as future ideas rather than omissions:
 MIT
 
 Optional setup (nightly feed folder, Ed, due.json): see [docs/SETUP.md](docs/SETUP.md).
+
+## Canvas v2 release candidate
+
+The integrated PR list, exact source heads, build commands and Windows Chrome loading steps are in [docs/CANVAS_V2_RC.md](docs/CANVAS_V2_RC.md).

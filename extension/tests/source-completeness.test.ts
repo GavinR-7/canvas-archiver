@@ -67,6 +67,8 @@ async function runSync(options: { source?: "planner" | "syllabus"; status?: numb
     }
     if (url.pathname.endsWith("/courses/1") && options.syllabusShape === "missing") return json({ id: 1 });
     if (url.pathname.endsWith("/courses/1")) return json({ syllabus_body: options.partial ? "<p>Final exam: November 20, 2026 at 7pm.</p>" : "" });
+    // The integrated syllabus-file reader also lists files; this fixture has none.
+    if (/\/courses\/\d+\/files$/.test(url.pathname)) return json([]);
     throw new Error("Unexpected synthetic request");
   }));
   await import("@/entrypoints/background");

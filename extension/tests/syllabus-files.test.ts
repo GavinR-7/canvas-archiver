@@ -142,3 +142,35 @@ describe("Ed: one notice per sync", () => {
     expect(result.tasks.map((t) => t.courseId).sort()).toEqual([1, 3]);
   });
 });
+
+describe("RC syllabus-file read evidence", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  it("uses the scheduler overdue window when supplied, without changing the default grace", async () => {
+    const file: SyllabusFile = { id: 99, name: "syllabus.txt", updatedAt: null, url: null };
+    const { d } = deps([file], async () => "Prelim 1: September 5, 2026 at 7:30 PM.");
+    expect((await syllabusFileTasks([course], 240, d, NOW)).tasks).toHaveLength(0);
+    expect((await syllabusFileTasks([course], 240, d, NOW, 7)).tasks).toHaveLength(1);
+  });
+
+  it.each(["denied", "malformed", "missing-linked"] as const)("marks a %s file lookup incomplete through the actual reader", async (mode) => {
+    const { browserSyllabusDeps } = await import("@/src/dates/syllabus-reader");
+    vi.stubGlobal("fetch", async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/courses/7")) return json({ syllabus_body: mode === "missing-linked" ? '<a href="/courses/7/files/99">Syllabus</a>' : "" });
+      if (url.pathname.endsWith("/courses/7/files")) return mode === "denied" ? json({}, 403) : json(mode === "malformed" ? [{}] : []);
+      return json({}, 404);
+    });
+    const result = await syllabusFileTasks([course], 240, browserSyllabusDeps(), NOW, 7);
+    expect(result).toEqual({ tasks: [], unreadable: 1 });
+  });
+
+  it("recognizes an empty file listing as a healthy empty result", async () => {
+    const { browserSyllabusDeps } = await import("@/src/dates/syllabus-reader");
+    vi.stubGlobal("fetch", async (input: unknown) => {
+      const url = new URL(String(input));
+      return json(url.pathname.endsWith("/courses/7") ? { syllabus_body: "" } : []);
+    });
+    expect(await syllabusFileTasks([course], 240, browserSyllabusDeps(), NOW, 7)).toEqual({ tasks: [], unreadable: 0 });
+  });
+});

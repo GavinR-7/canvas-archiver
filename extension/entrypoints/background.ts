@@ -126,7 +126,7 @@ async function refresh(): Promise<Snapshot> {
       tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error,
     }));
     // File dates remain best-effort locally; a known unreadable file cannot certify deletion.
-    const syllabusFiles = await syllabusFileTasks(current, EXAM_DAYS, browserSyllabusDeps(), now).catch(() => ({
+    const syllabusFiles = await syllabusFileTasks(current, EXAM_DAYS, browserSyllabusDeps(), now, DEADLINE_OVERDUE_DAYS).catch(() => ({
       tasks: [], unreadable: 1,
     }));
     const unavailable = new Set(syllabusRead.unavailableCourseIds);
@@ -159,7 +159,7 @@ async function refresh(): Promise<Snapshot> {
       gradescopeError: gs.error,
       edError,
       syllabusError,
-      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusComplete, ed: edRead.complete, manual: true },
+      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusComplete, ed: edRead.complete },
     };
     await saveSnapshot(snapshot);
     return snapshot;
@@ -175,7 +175,7 @@ async function refresh(): Promise<Snapshot> {
       exams: mergeTasks(withManualExams([...(previous.exams ?? []).filter((task) => task.source !== "gradescope"), ...gs.tasks.filter(isExamTask)], await loadManualExams(), previous.courses)),
       error: describeError(error),
       gradescopeError: gs.error,
-      sourceCompleteness: { canvas: false, gradescope: gs.complete, syllabus: false, ed: false, manual: true },
+      sourceCompleteness: { canvas: false, gradescope: gs.complete, syllabus: false, ed: false },
     };
     await saveSnapshot(failed);
     return failed;

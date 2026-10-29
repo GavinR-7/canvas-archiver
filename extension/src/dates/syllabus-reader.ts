@@ -50,20 +50,16 @@ export function browserSyllabusDeps(): SyllabusFileDeps {
         if (!(error instanceof AccessDeniedError || error instanceof NotFoundError)) throw error;
       }
       const found: SyllabusFile[] = [];
-      try {
-        for (const raw of await getAll<Raw>(`/courses/${course.id}/files`, { search_term: "syllabus" }, { maxPages: 2 })) {
-          const file = normalizeFile(raw);
-          if (file) {
-            ids.delete(file.id);
-            found.push({ id: file.id, name: file.displayName, updatedAt: file.updatedAt, url: file.url });
-          }
-        }
-      } catch (error) {
-        if (!(error instanceof AccessDeniedError || error instanceof NotFoundError)) throw error;
+      for (const raw of await getAll<Raw>(`/courses/${course.id}/files`, { search_term: "syllabus" }, { maxPages: 2 })) {
+        const file = normalizeFile(raw);
+        if (!file) throw new Error("Canvas returned an unreadable syllabus file row.");
+        ids.delete(file.id);
+        found.push({ id: file.id, name: file.displayName, updatedAt: file.updatedAt, url: file.url });
       }
       for (const id of ids) {
         const file = await asFile(id, course.id);
-        if (file) found.push(file);
+        if (!file) throw new Error("A linked syllabus file could not be read.");
+        found.push(file);
       }
       return found;
     },
