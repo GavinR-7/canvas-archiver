@@ -86,3 +86,5 @@ Deliberately not built, and listed here as future ideas rather than omissions:
 ## License
 
 MIT
+
+Optional setup (nightly feed folder, Ed, due.json): see [docs/SETUP.md](docs/SETUP.md).

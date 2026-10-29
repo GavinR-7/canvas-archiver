@@ -48,7 +48,7 @@ Built: exam dates from the Canvas syllabus and Ed announcements/pinned threads (
 
 ## T-27 status (branch `products/v2-feed`)
 
-Built: opt-in nightly feed (Settings → inbox folder + switch; alarm opens `files.html?auto=feed`, which runs the ingest layout into the inbox and closes), course folders normalised to the contract name (`ECE 3030 FA26` → `ece3030`), and `tools/hq-ingest/`, the no-AI ingest script (tested). **Unverified:** Chrome accepting a `\\wsl.localhost` folder, folder permission surviving a browser restart, `pdftotext` not installed here, the whole chain on a real course.
+Built: opt-in nightly feed (Settings → inbox folder + switch; alarm opens `files.html?auto=feed`, which runs the ingest layout into the inbox and closes), course folders normalised to the contract name (`ECE 3030 FA26` → `ece3030`), and `tools/hq-ingest/`, the no-AI ingest script (tested). **Unverified:** (Chrome refused a `\\wsl.localhost` folder in the I-16 test; the feed now uses the Windows folder `C:\Users\gavin\hq-course-inbox`, T-500) folder permission surviving a browser restart, `pdftotext` not installed here, the whole chain on a real course.
 
 ## T-28 status (branch `products/v2-ai-pick`)
 
@@ -211,3 +211,5 @@ nonempty Canvas cap exhaustion, cached/remote preservation, maxPages=1,
 normal termination including page 25, saturated/truncated Ed data, parsed
 local updates, and healthy empty/49-row/terminal-header controls. HOLD remains
 pending the next independent exact-head review.
+## T-500: feed folder moved to a Windows folder (PR `products/v2-6-windows-inbox`, base v2-5-all-exams)
+Built: `docs/SETUP.md` (feed folder `C:\Users\gavin\hq-course-inbox`, Ed note, due.json stays OFF until its own token card), one hint line on the options page, notes in README and DUE_JSON.md. HQ's nightly job reads `/mnt/c/Users/gavin/hq-course-inbox` (hq-ingest change is Builder's). Code change: that one options-page string only.
