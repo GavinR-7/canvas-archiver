@@ -81,7 +81,20 @@ export function subsetPlan(plan: CoursePlan, selected: ReadonlySet<string>): Cou
 
 /** Sources the manifest says are already saved and unchanged, so the list can say so. */
 export function savedSources(plan: CoursePlan, manifest: CourseManifest): Set<string> {
-  return new Set(plan.items.filter((item) => decide(item, manifest.entries[item.source]) === "unchanged").map((i) => i.source));
+  return new Set(
+    plan.items
+      .filter((item) => manifest.entries[item.source]?.method !== "downloads" && decide(item, manifest.entries[item.source]) === "unchanged")
+      .map((i) => i.source),
+  );
+}
+
+/** Sources whose only copy is in the browser's Downloads folder, not in the archive folder. */
+export function downloadsSources(plan: CoursePlan, manifest: CourseManifest): Set<string> {
+  return new Set(
+    plan.items
+      .filter((item) => manifest.entries[item.source]?.method === "downloads" && decide(item, manifest.entries[item.source]) === "unchanged")
+      .map((i) => i.source),
+  );
 }
 
 // --- Selection, remembered per course ----------------------------------------
