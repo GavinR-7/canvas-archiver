@@ -41,7 +41,10 @@ export function sameDeadline(a: Task, b: Task): boolean {
 }
 
 export function mergeTasks(tasks: Task[]): Task[] {
-  const ordered = [...tasks].sort((a, b) => PRIORITY[a.source] - PRIORITY[b.source]);
+  // Callers put cached rows before fresh rows. Replace equal IDs first so
+  // stale fields cannot survive or affect the later semantic comparison.
+  const unique = new Map(tasks.map((task) => [task.id, task]));
+  const ordered = [...unique.values()].sort((a, b) => PRIORITY[a.source] - PRIORITY[b.source]);
   const kept: Task[] = [];
   for (const task of ordered) {
     const twin = kept.find((k) => k.id !== task.id && sameDeadline(k, task));

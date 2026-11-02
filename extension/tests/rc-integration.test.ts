@@ -5,6 +5,7 @@ import type { Task } from "@/src/types/canvas";
 import { normalizeCourse, normalizePlannerItem } from "@/src/canvas/normalize";
 import { buildDueFile } from "@/src/sync/due";
 import { syncDue } from "@/src/sync/run";
+import { tasksFromText } from "@/src/dates/tasks";
 
 const mocks = vi.hoisted(() => {
   const read = async (): Promise<TaskRead> => ({ tasks: [], complete: true, unavailableCourseIds: [], error: null });
@@ -109,4 +110,34 @@ it("adds local manual exams to the normal deadline window and the separate exam 
   expect(snapshot.exams?.map((t) => t.title)).toEqual(["Entered near exam", "Entered far exam"]);
   expect(buildDueFile(snapshot.tasks, now).items).toHaveLength(1);
   expect(snapshot.sourceCompleteness).toEqual({ canvas: true, gradescope: true, syllabus: true, ed: true });
+});
+
+it("replaces cached syllabus fields with a fresh row of the same ID while refusing incomplete upload", async () => {
+  const cached = { ...task(901, 10, true, "syllabus"), id: "syllabus:1:exam", htmlUrl: "https://example.test/stale" };
+  const fresh = { ...cached, title: "Prelim updated", htmlUrl: "https://example.test/fresh" };
+  mocks.previous = { ...EMPTY_SNAPSHOT, tasks: [cached], exams: [cached] };
+  mocks.syllabus.mockResolvedValue({ tasks: [fresh], complete: true, unavailableCourseIds: [], error: null });
+  mocks.files.mockResolvedValue({ tasks: [], unreadable: 1 });
+  const snapshot = await refresh();
+  expect(snapshot.tasks).toEqual([fresh]);
+  expect(snapshot.exams).toEqual([fresh]);
+  expect(snapshot.sourceCompleteness?.syllabus).toBe(false);
+  await expectNoUpload(snapshot);
+});
+
+it("collapses page/file exam IDs in the snapshot and uploaded due.json", async () => {
+  const [exam] = tasksFromText("Prelim 1\nThursday, November 12, 7:30 PM", course, "syllabus", course.htmlUrl, now, 240, 7);
+  if (!exam) throw new Error("Expected parsed exam");
+  const fileExam = { ...exam, htmlUrl: course.htmlUrl + "/files/42" };
+  mocks.syllabus.mockResolvedValue({ tasks: [exam], complete: true, unavailableCourseIds: [], error: null });
+  mocks.files.mockResolvedValue({ tasks: [fileExam], unreadable: 0 });
+  const snapshot = await refresh();
+  expect(snapshot.sourceCompleteness?.syllabus).toBe(true);
+  expect(snapshot.tasks).toEqual([fileExam]);
+  expect(snapshot.exams).toEqual([fileExam]);
+  const doFetch = vi.fn(async (_input: unknown, init?: RequestInit) => new Response("{}", { status: init?.method === "PUT" ? 201 : 404 }));
+  expect(await syncDue(snapshot, { enabled: true, repo: "fixture/private", path: "due.json", token: "SYNTHETIC_TOKEN" }, now, doFetch as typeof fetch)).toMatchObject({ status: "updated" });
+  const write = doFetch.mock.calls.find((call) => call[1]?.method === "PUT");
+  const payload = JSON.parse(atob(JSON.parse(String(write?.[1]?.body)).content));
+  expect(payload.items.map((item: { id: string }) => item.id)).toEqual([exam.id]);
 });
