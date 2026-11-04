@@ -10,14 +10,16 @@
  * source of silent `undefined`s.
  */
 
-import type { CanvasUser, Course, Task } from "@/src/types/canvas";
+import type { CanvasUser, Course, Task, TaskSource } from "@/src/types/canvas";
 
 /** Messages a UI surface can send to the service worker. */
 export type Request =
   /** Return whatever is cached, fetching only if nothing is. */
   | { type: "GET_SNAPSHOT" }
   /** Re-fetch from Canvas regardless of cache. */
-  | { type: "REFRESH" };
+  | { type: "REFRESH" }
+  /** Refresh, then push due.json if sync is enabled. */
+  | { type: "SYNC_NOW" };
 
 export type SnapshotErrorKind = "session-expired" | "network" | "other";
 
@@ -40,6 +42,8 @@ export interface Snapshot {
   user: CanvasUser | null;
   courses: Course[];
   tasks: Task[];
+  /** Every known exam date, however far ahead (not limited to the Upcoming window). Absent in older snapshots. */
+  exams?: Task[];
   /** When this data was fetched from Canvas. ISO 8601 UTC. */
   fetchedAt: string | null;
   /** Non-null when the last Canvas fetch failed. Stale data may still be present. */
@@ -50,6 +54,12 @@ export interface Snapshot {
    * tasks from the previous successful fetch stay in `tasks`.
    */
   gradescopeError: SnapshotError | null;
+  /** Same for Ed Discussion. Absent in snapshots cached before Ed existed. */
+  edError?: SnapshotError | null;
+  /** Failed syllabus read; used to keep an incomplete empty export from erasing deadlines. */
+  syllabusError?: SnapshotError | null;
+  /** Affirmative remote-source results; manual dates are local. Never inferred from null errors. Absent on legacy caches. */
+  sourceCompleteness?: Record<Exclude<TaskSource, "manual">, boolean>;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {

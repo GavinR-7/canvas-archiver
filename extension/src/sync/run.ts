@@ -1,0 +1,61 @@
+import type { Snapshot } from "@/src/lib/messages";
+import { buildDueFile, sameContent, serialize } from "./due";
+import { putFile, validate, type SyncOutcome, type SyncSettings } from "./github";
+import { buildScheduleFile, sameSchedule, serializeSchedule, type ClassMeeting } from "@/src/schedule/model";
+import { saveStatus } from "./settings";
+
+/** schedule.json sits next to due.json: `notes/due.json` → `notes/schedule.json`. */
+export const schedulePath = (duePath: string) => duePath.replace(/[^/]*$/, "") + "schedule.json";
+
+/** Push the snapshot's deadlines if the person turned sync on. Records the outcome for the options page. */
+export async function syncDue(
+  snapshot: Snapshot,
+  settings: SyncSettings,
+  now: Date = new Date(),
+  doFetch: typeof fetch = fetch,
+  classes: ClassMeeting[] = [],
+): Promise<SyncOutcome | null> {
+  if (!settings.enabled) return null;
+  const problem = validate(settings);
+  if (problem) {
+    await saveStatus({ at: now.toISOString(), ok: false, message: problem });
+    return { status: "failed", message: problem };
+  }
+  // Nothing fetched yet: absence of a cache is not an authoritative empty result.
+  if (!snapshot.fetchedAt) {
+    const outcome: SyncOutcome = { status: "failed", message: "No deadlines loaded yet; sync skipped." };
+    await saveStatus({ at: now.toISOString(), ok: false, message: outcome.message });
+    return outcome;
+  }
+  // Replacing the whole remote list requires affirmative read evidence. This
+  // also protects nonempty partial lists from deleting another source's rows.
+  const complete = snapshot.sourceCompleteness;
+  if (!complete || complete.canvas !== true || complete.gradescope !== true || complete.syllabus !== true || complete.ed !== true ||
+      snapshot.error || snapshot.gradescopeError || snapshot.edError || snapshot.syllabusError) {
+    const message = "Deadline sources are incomplete or unverified; sync skipped to keep existing deadlines.";
+    await saveStatus({ at: now.toISOString(), ok: false, message });
+    return { status: "failed", message };
+  }
+  const file = buildDueFile(snapshot.tasks, now);
+  const outcome = await putFile(settings, serialize(file), (existing) => sameContent(existing, file), `chore: update ${settings.path} (${file.items.length} deadlines)`, doFetch);
+  // Classes go in the same pass, only when the person has entered some.
+  let scheduleNote = "";
+  let scheduleFailed = false;
+  if (classes.length > 0 && outcome.status !== "failed") {
+    const schedule = buildScheduleFile(classes, now);
+    const sent = await putFile(
+      { ...settings, path: schedulePath(settings.path) },
+      serializeSchedule(schedule),
+      (existing) => sameSchedule(existing, schedule),
+      `chore: update schedule.json (${classes.length} meetings)`,
+      doFetch,
+    );
+    scheduleFailed = sent.status === "failed";
+    scheduleNote = sent.status === "failed" ? ` Schedule not sent: ${sent.message}` : ` Schedule: ${sent.status === "unchanged" ? "up to date" : "written"}.`;
+  }
+  const message =
+    outcome.status === "failed" ? outcome.message : outcome.status === "unchanged" ? `Up to date (${file.items.length} deadlines).` : `Wrote ${file.items.length} deadlines.`;
+  const full = message + scheduleNote;
+  await saveStatus({ at: now.toISOString(), ok: outcome.status !== "failed" && !scheduleFailed, message: full });
+  return scheduleFailed ? { status: "failed", message: full } : outcome;
+}

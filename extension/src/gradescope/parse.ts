@@ -237,3 +237,49 @@ export function parseAssignments(html: string, course: GradescopeCourse): Task[]
 
   return tasks;
 }
+
+/** Recognizers for deadline reads; permissive archive/display parsing alone is not deletion evidence. */
+const markupOnly = (html: string) => html.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
+const hasClass = (attributes: string, token: string) => (attr(attributes, "class") ?? "").split(/\s+/).includes(token);
+
+export function recognizedCourses(html: string): GradescopeCourse[] {
+  const markup = markupOnly(html);
+  const courses = parseCourses(markup);
+  const boxes = [...markup.matchAll(/<a\b([^>]*)>/gi)].filter((match) => hasClass(match[1] ?? "", "courseBox"));
+  const lists = [...markup.matchAll(/<div\b([^>]*)>([\s\S]*?)<\/div\s*>/gi)].filter((match) => hasClass(match[1] ?? "", "courseList"));
+  const courseLinks = [...markup.matchAll(/<a\b([^>]*)>/gi)].filter((match) => /\/courses\/\d+/.test(attr(match[1] ?? "", "href") ?? ""));
+  if (lists.length === 0 || courseLinks.length !== courses.length || boxes.length !== courses.length || (courses.length === 0 && lists.some((match) => (match[2] ?? "").trim()))) {
+    throw new Error("Gradescope returned an unrecognized course list.");
+  }
+  return courses;
+}
+
+export function recognizedAssignments(html: string, course: GradescopeCourse): Task[] {
+  const markup = markupOnly(html);
+  const table = [...markup.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table\s*>/gi)]
+    .find((match) => attr(match[1] ?? "", "id") === "assignments-student-table");
+  if (!table) throw new Error("Gradescope did not return the student assignment table.");
+  const body = (table[2] ?? "").replace(/<thead\b[^>]*>[\s\S]*?<\/thead\s*>/gi, "");
+  const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi)];
+  const tasks: Task[] = [];
+  for (const row of rows) {
+    const parsed = parseAssignments(row[0], course);
+    if (parsed.length !== 1) throw new Error("Gradescope returned an unreadable assignment row.");
+    const task = parsed[0]!;
+    const times = [...row[0].matchAll(/<time\b([^>]*)>/gi)].filter((match) => hasClass(match[1] ?? "", "submissionTimeChart--dueDate"));
+    if (times.some((match) => parseGradescopeTime(attr(match[1] ?? "", "datetime")) === null) ||
+        (times.length === 0 && !/\bno due date\b/i.test(textOf(row[0])))) {
+      throw new Error("Gradescope returned an unrecognized assignment deadline.");
+    }
+    tasks.push(task);
+  }
+  // A changed layout must not hide nonempty table content outside known rows.
+  const rest = body.replace(/<tr\b[^>]*>[\s\S]*?<\/tr\s*>/gi, "").replace(/<\/?(?:tbody|tfoot)\b[^>]*>/gi, "").trim();
+  if (rest) throw new Error("Gradescope returned unrecognized assignment table content.");
+  const ids = new Set(tasks.map((task) => task.canvasId));
+  const references = [...markup.matchAll(/(?:href="[^"]*\/assignments\/|data-assignment-id=")(\d+)/gi)];
+  if (references.some((match) => !ids.has(Number(match[1])))) {
+    throw new Error("Gradescope returned assignments outside the recognized table.");
+  }
+  return tasks;
+}

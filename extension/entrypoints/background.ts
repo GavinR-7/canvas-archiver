@@ -22,9 +22,7 @@ import {
   fetchActiveCourses,
   fetchUpcomingTasks,
   fetchUser,
-  UPCOMING_DAYS,
 } from "@/src/canvas/api";
-import { byDueDate } from "@/src/lib/task-status";
 import { CanvasError, SessionExpiredError } from "@/src/canvas/errors";
 import {
   EMPTY_SNAPSHOT,
@@ -33,6 +31,21 @@ import {
   type SnapshotError,
 } from "@/src/lib/messages";
 import { fetchGradescopeTasks } from "@/src/gradescope/api";
+import { fetchEdTasks, type EdResult } from "@/src/ed/api";
+import { fetchSyllabusTasks } from "@/src/dates/syllabus";
+import { syllabusFileTasks } from "@/src/dates/syllabus-files";
+import { browserSyllabusDeps } from "@/src/dates/syllabus-reader";
+import { EXAM_DAYS, isExamTask } from "@/src/dates/exams";
+import { mergeTasks } from "@/src/dates/merge";
+import { loadManualExams, manualExamTasks, withManualExams } from "@/src/dates/manual-exams";
+import { loadSettings } from "@/src/sync/settings";
+import { syncDue } from "@/src/sync/run";
+import { loadClasses } from "@/src/schedule/model";
+import { loadFeed, minutesUntilHour } from "@/src/feed/settings";
+import { hasConsent } from "@/src/consent/consent";
+import { DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS, taskWindow, tasksInWindow } from "@/src/lib/task-window";
+import type { TaskSource } from "@/src/types/canvas";
+import type { TaskRead } from "@/src/lib/source-read";
 import { loadSnapshot, saveSnapshot } from "@/src/lib/storage";
 
 /** Cached data older than this is refreshed on open. */
@@ -65,18 +78,35 @@ function describeError(error: unknown, service = "Canvas"): SnapshotError {
   return { kind: "other", message: String(error) };
 }
 
+/** A partial source may contribute fresh rows but cannot discard its cached rows. */
+function retainedTasks(previous: Snapshot, source: TaskSource, read: TaskRead) {
+  if (read.complete) return read.tasks;
+  return [...new Map([...[...previous.tasks, ...(previous.exams ?? [])].filter((task) => task.source === source), ...read.tasks].map((task) => [task.id, task])).values()];
+}
+
+/** Expected signed-out states are already shown in the snapshot. */
+function logFailure(what: string, error: unknown) {
+  if (error instanceof SessionExpiredError) console.debug("[canvas-archiver] " + what + ": " + error.message);
+  else console.warn("[canvas-archiver] " + what, error);
+}
+
 /** Fetch everything from Canvas and cache it. */
 async function refresh(): Promise<Snapshot> {
   const previous = await loadSnapshot();
+  const now = new Date();
+  const dueWindow = taskWindow(now, DEADLINE_LOOKAHEAD_DAYS, DEADLINE_OVERDUE_DAYS);
+  const previousAll = [...new Map([...previous.tasks, ...(previous.exams ?? [])].map((task) => [task.id, task])).values()];
 
+  // Fetch once out to the exam horizon; retain the shared due.json window in tasks.
   // Gradescope runs alongside Canvas and fails independently. Its tasks from
   // the previous fetch are kept on failure so a flaky page doesn't blank them.
-  const gradescope = fetchGradescopeTasks(UPCOMING_DAYS).then(
-    (tasks) => ({ tasks, error: null as SnapshotError | null }),
+  const gradescope = fetchGradescopeTasks(EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).then(
+    (read) => ({ tasks: retainedTasks(previous, "gradescope", read), complete: read.complete, error: read.complete ? null : describeError(read.error, "Gradescope") }),
     (error: unknown) => {
-      console.warn("[canvas-archiver] gradescope refresh failed", error);
+      logFailure("gradescope refresh failed", error);
       return {
-        tasks: previous.tasks.filter((task) => task.source === "gradescope"),
+        tasks: previousAll.filter((task) => task.source === "gradescope"),
+        complete: false,
         error: describeError(error, "Gradescope"),
       };
     },
@@ -86,39 +116,81 @@ async function refresh(): Promise<Snapshot> {
     // Courses first: tasks are labelled with their course name, so the lookup
     // has to exist before planner items are normalised.
     const [user, courses] = await Promise.all([fetchUser(), fetchActiveCourses()]);
-    const tasks = await fetchUpcomingTasks(courses);
+    const planner = await fetchUpcomingTasks(courses, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS);
+    const tasks = planner.complete ? planner.tasks : previousAll.filter((task) => task.source === "canvas");
+
+    // Dates written in prose (syllabus, Ed announcements) are best-effort: each
+    // fails alone, and its previous result is kept rather than blanking.
+    const current = courses.filter((c) => !c.restricted);
+    const syllabusRead = await fetchSyllabusTasks(courses, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): TaskRead => ({
+      tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error,
+    }));
+    // File dates remain best-effort locally; a known unreadable file cannot certify deletion.
+    const syllabusFiles = await syllabusFileTasks(current, EXAM_DAYS, browserSyllabusDeps(), now, DEADLINE_OVERDUE_DAYS).catch(() => ({
+      tasks: [], unreadable: 1,
+    }));
+    const unavailable = new Set(syllabusRead.unavailableCourseIds);
+    const syllabus = [
+      ...previousAll.filter((task) => task.source === "syllabus" && (syllabusFiles.unreadable > 0 || unavailable.has(task.courseId))),
+      ...syllabusRead.tasks,
+      ...syllabusFiles.tasks,
+    ];
+    const syllabusComplete = syllabusRead.complete && syllabusFiles.unreadable === 0;
+    const syllabusError = !syllabusRead.complete ? describeError(syllabusRead.error, "Canvas syllabus")
+      : syllabusFiles.unreadable > 0 ? { kind: "other" as const, message: "Some syllabus files could not be read. Cached dates were kept." } : null;
+    const edRead = await fetchEdTasks(current, EXAM_DAYS, now, DEADLINE_OVERDUE_DAYS).catch((error: unknown): EdResult => ({
+      tasks: [], complete: false, unavailableCourseIds: current.map((course) => course.id), error, missed: [],
+    }));
+    const ed = retainedTasks(previous, "ed", edRead);
+    const edError = edRead.complete ? null : edRead.missed?.length
+      ? { kind: "other" as const, message: "Ed Discussion data is missing for " + edRead.missed.join(", ") + ". The other courses are up to date." }
+      : describeError(edRead.error, "Ed Discussion");
 
     const gs = await gradescope;
+    const manual = manualExamTasks(await loadManualExams(), courses);
+    const all = [...tasks, ...gs.tasks, ...syllabus, ...ed, ...manual];
     const snapshot: Snapshot = {
       user,
       courses,
-      tasks: [...tasks, ...gs.tasks].sort(byDueDate),
+      tasks: mergeTasks(tasksInWindow(all, dueWindow)),
+      exams: mergeTasks(all.filter(isExamTask)),
       fetchedAt: new Date().toISOString(),
-      error: null,
+      error: planner.complete ? null : describeError(planner.error),
       gradescopeError: gs.error,
+      edError,
+      syllabusError,
+      sourceCompleteness: { canvas: planner.complete, gradescope: gs.complete, syllabus: syllabusComplete, ed: edRead.complete },
     };
     await saveSnapshot(snapshot);
     return snapshot;
   } catch (error) {
-    console.warn("[canvas-archiver] refresh failed", error);
+    logFailure("refresh failed", error);
     // Keep whatever was cached and attach the error, so the UI can show stale
     // data with a warning rather than going blank.
     const gs = await gradescope;
     const failed: Snapshot = {
       ...previous,
       // Canvas data is stale, but a fresh Gradescope result is still good.
-      tasks: [...previous.tasks.filter((task) => task.source === "canvas"), ...gs.tasks].sort(byDueDate),
+      tasks: mergeTasks([...previous.tasks.filter((task) => task.source !== "gradescope"), ...tasksInWindow(gs.tasks, dueWindow)]),
+      exams: mergeTasks(withManualExams([...(previous.exams ?? []).filter((task) => task.source !== "gradescope"), ...gs.tasks.filter(isExamTask)], await loadManualExams(), previous.courses)),
       error: describeError(error),
       gradescopeError: gs.error,
+      sourceCompleteness: { canvas: false, gradescope: gs.complete, syllabus: false, ed: false },
     };
     await saveSnapshot(failed);
     return failed;
   }
 }
 
+/** No request leaves the browser before the person accepts the first-run disclosure. */
+async function refreshWithConsent(): Promise<Snapshot> {
+  if (!(await hasConsent())) return EMPTY_SNAPSHOT;
+  return refresh();
+}
+
 /** Refresh, collapsing concurrent callers onto one set of requests. */
 function refreshOnce(): Promise<Snapshot> {
-  inFlight ??= refresh().finally(() => {
+  inFlight ??= refreshWithConsent().finally(() => {
     inFlight = null;
   });
   return inFlight;
@@ -136,7 +208,66 @@ async function getSnapshot(): Promise<Snapshot> {
   return refreshOnce();
 }
 
+/** Refresh from every source, then push due.json when the person has turned sync on. */
+const FEED_ALARM = "nightly-feed";
+
+/** (Re)create the daily alarm for the configured hour, or remove it. */
+async function scheduleFeed() {
+  const feed = await loadFeed();
+  await chrome.alarms.clear(FEED_ALARM);
+  if (feed.enabled) {
+    void chrome.alarms.create(FEED_ALARM, {
+      delayInMinutes: minutesUntilHour(new Date(), feed.hour),
+      periodInMinutes: 24 * 60,
+    });
+  }
+}
+
+/** The run needs a page (folder handle, long loop), so open one without taking focus. */
+async function startFeed() {
+  if (!(await hasConsent()) || !(await loadFeed()).enabled) return;
+  await chrome.tabs.create({ url: chrome.runtime.getURL("files.html?auto=feed"), active: false });
+}
+
+async function refreshAndSyncOnce(): Promise<Snapshot> {
+  if (!(await hasConsent())) return EMPTY_SNAPSHOT;
+  const snapshot = await refreshOnce();
+  await syncDue(snapshot, await loadSettings(), new Date(), fetch, await loadClasses()).catch((error: unknown) => {
+    console.warn("[canvas-archiver] due.json sync failed", error);
+  });
+  return snapshot;
+}
+
+// Share the entire refresh + both uploads, including manual requests during an
+// alarm's PUT. Sharing only refreshOnce lets older and newer uploads race.
+let syncInFlight: Promise<Snapshot> | null = null;
+function refreshAndSync(): Promise<Snapshot> {
+  syncInFlight ??= refreshAndSyncOnce().finally(() => { syncInFlight = null; });
+  return syncInFlight;
+}
+
+const REFRESH_ALARM = "refresh-and-sync";
+const REFRESH_EVERY_MINUTES = 120;
+
 export default defineBackground(() => {
+  // Alarms persist across worker restarts, but only fire while Chrome is running.
+  // Creating one with an existing name replaces it, so this is safe on every start.
+  void chrome.alarms.get(REFRESH_ALARM).then((existing) => {
+    if (!existing) void chrome.alarms.create(REFRESH_ALARM, { delayInMinutes: 1, periodInMinutes: REFRESH_EVERY_MINUTES });
+  });
+  void scheduleFeed();
+  // First run: open a page that shows the disclosure (every page is gated).
+  chrome.runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === "install") void chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") });
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes["feed.settings"]) void scheduleFeed();
+  });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === REFRESH_ALARM) void refreshAndSync();
+    if (alarm.name === FEED_ALARM) void startFeed();
+  });
+
   /**
    * The message bus.
    *
@@ -149,9 +280,11 @@ export default defineBackground(() => {
     const handler =
       message?.type === "REFRESH"
         ? refreshOnce
-        : message?.type === "GET_SNAPSHOT"
-          ? getSnapshot
-          : null;
+        : message?.type === "SYNC_NOW"
+          ? refreshAndSync
+          : message?.type === "GET_SNAPSHOT"
+            ? getSnapshot
+            : null;
 
     if (!handler) return false;
 

@@ -32,9 +32,10 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
 /** Shown only for sources other than Canvas, which is the unmarked default. */
 export function SourceBadge({ source }: { source: Task["source"] }) {
   if (source === "canvas") return null;
+  const label = { gradescope: "Gradescope", ed: "Ed", syllabus: "Syllabus", manual: "Entered by you" }[source];
   return (
     <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">
-      Gradescope
+      {label}
     </span>
   );
 }
@@ -43,6 +44,7 @@ const KIND_LABELS: Record<Task["kind"], string> = {
   assignment: "Assignment",
   quiz: "Quiz",
   discussion: "Discussion",
+  exam: "Exam",
 };
 
 export function KindBadge({ kind }: { kind: Task["kind"] }) {
@@ -67,7 +69,7 @@ export function ErrorBanner({
   error: SnapshotError;
   /** Where "sign in" should send the user. Named for Canvas, used for both. */
   canvasOrigin: string;
-  service?: "Canvas" | "Gradescope";
+  service?: "Canvas" | "Gradescope" | "Ed Discussion";
 }) {
   const expired = error.kind === "session-expired";
 
@@ -115,5 +117,28 @@ export function EmptyState({ children }: { children: ReactNode }) {
     <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
       {children}
     </div>
+  );
+}
+
+/** Collapsed-by-default switch for courses the current-term filter hides. */
+export function ShowAllCourses({
+  hiddenCount,
+  showAll,
+  onToggle,
+}: {
+  hiddenCount: number;
+  showAll: boolean;
+  onToggle: () => void;
+}) {
+  if (hiddenCount === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={showAll}
+      className="mt-2 text-xs underline underline-offset-2 hover:no-underline"
+    >
+      {showAll ? "Hide old and administrative courses" : `Show all (${hiddenCount} older or administrative hidden)`}
+    </button>
   );
 }

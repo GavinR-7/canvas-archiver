@@ -1,0 +1,311 @@
+/**
+ * The Files page: pick a folder, review the plan, download.
+ *
+ * This runs as an extension page, not in the service worker, because
+ * `showDirectoryPicker` needs a page and a click, and because a run writes
+ * through a directory handle only a page can hold. Keep the tab open during a
+ * run; a second run skips what is already on disk.
+ */
+
+import { describeRun } from "@/src/files/summary";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
+import { fetchCourseSources } from "@/src/files/api";
+import { fetchGradescopeFiles } from "@/src/gradescope/api";
+import { withGradescope } from "@/src/gradescope/files";
+import { layouts, type Layout } from "@/src/files/layout";
+import {
+  forgetRoot,
+  loadRoot,
+  pickRoot,
+  requestRootAccess,
+  rootAccess,
+  saveRoot,
+  type RootAccess,
+} from "@/src/files/handle-store";
+import { loadDirBindings, rememberDirBindings } from "@/src/files/dirs";
+import { planCourses, summarize, type CoursePlan } from "@/src/files/plan";
+import { IN_DOWNLOADS, looksBlockedByCors, runArchive, type RunResult } from "@/src/files/runner";
+import { downloadsSink, folderManifestStore, folderSink, storageManifestStore } from "@/src/files/sinks";
+import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
+import { selectedIds } from "@/src/canvas/visibility";
+import { useCourseFilter } from "@/src/ui/useCourseFilter";
+import { useSnapshot } from "@/src/ui/useSnapshot";
+import Picker from "./Picker";
+import { runFeed } from "@/src/feed/run";
+
+const AUTO_FEED = new URLSearchParams(location.search).get("auto") === "feed";
+
+const button =
+  "rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white";
+const linkButton = "text-sm underline underline-offset-2 hover:no-underline";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+export default function App() {
+  const { snapshot, loading } = useSnapshot();
+  const [root, setRoot] = useState<FileSystemDirectoryHandle | null>(null);
+  const [access, setAccess] = useState<RootAccess>("prompt");
+  const [chosen, setChosen] = useState<Set<number> | null>(null);
+  const [plans, setPlans] = useState<CoursePlan[] | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const planGeneration = useRef(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [layoutId, setLayoutId] = useState<Layout["id"]>("archive");
+  const layout = layouts[layoutId];
+  const abort = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const saved = await loadRoot();
+      setRoot(saved);
+      if (saved) setAccess(await rootAccess(saved));
+    })();
+  }, []);
+
+  // Opened by the nightly alarm: run the feed once, record the result, close.
+  const ran = useRef(false);
+  useEffect(() => {
+    if (!AUTO_FEED || loading || ran.current) return;
+    ran.current = true;
+    void (async () => {
+      setBusy(true);
+      setStatus("Nightly feed to HQ is running. This tab closes when it is done.");
+      const outcome = await runFeed(snapshot.courses);
+      setStatus(outcome.message);
+      setBusy(false);
+      if (outcome.ok) setTimeout(() => window.close(), 3000);
+    })();
+  }, [loading, snapshot.courses]);
+
+  const allCourses = useMemo(() => snapshot.courses.filter((c) => !c.restricted), [snapshot.courses]);
+  const filter = useCourseFilter("files", allCourses);
+  const courses = filter.courses;
+  // Default selection is the current-term list, not whatever Show all reveals. Once the user has chosen, the set
+  // is theirs: a course hidden by the filter but already chosen stays chosen and
+  // is still read by the plan below.
+  const selected = selectedIds(filter.current, chosen);
+
+  const choose = useCallback(async () => {
+    setProblem(null);
+    try {
+      const handle = await pickRoot();
+      await saveRoot(handle);
+      setRoot(handle);
+      setAccess(await requestRootAccess(handle));
+    } catch (error) {
+      if ((error as DOMException).name !== "AbortError") {
+        setProblem(`Chrome would not use that folder: ${(error as Error).message}. Pick or create a subfolder such as Documents/School.`);
+      }
+    }
+  }, []);
+
+  const reconnect = useCallback(async () => {
+    if (root) setAccess(await requestRootAccess(root));
+  }, [root]);
+
+  const buildPlan = useCallback(async () => {
+    planGeneration.current++; // drop any Gradescope listing still pending from an earlier plan
+    setBusy(true);
+    setProblem(null);
+    setNotice(null);
+    setResult(null);
+    setPlans(null);
+    try {
+      const inputs: Parameters<typeof withGradescope>[0] = [];
+      for (const course of allCourses.filter((c) => selected.has(c.id))) {
+        setStatus(`Reading ${course.courseCode || course.name}…`);
+        inputs.push({ course, sources: await fetchCourseSources(course.id) });
+      }
+      // The Canvas plan is published first and on its own: Gradescope is optional and may hang,
+      // and must never hold up (or block) downloading Canvas files.
+      const generation = ++planGeneration.current;
+      const bound = await loadDirBindings(layout.id);
+      setPlans(planCourses(inputs, layout, bound));
+      setBusy(false);
+      setStatus("Reading Gradescope handouts…");
+      void fetchGradescopeFiles().then((listing) => {
+        if (generation !== planGeneration.current) return; // a newer plan, or a run, took over
+        const handouts = listing.courses.reduce((n, c) => n + c.files.length, 0);
+        setNotice(
+          listing.errors.length > 0
+            ? `Gradescope: ${handouts} handouts found; ${listing.errors.length} problem(s), e.g. ${listing.errors[0]}. Canvas files are unaffected.`
+            : handouts > 0
+              ? `Gradescope: ${handouts} handouts found.`
+              : null,
+        );
+        if (handouts > 0) setPlans(planCourses(withGradescope(inputs, listing), layout, bound));
+        setStatus(null);
+      });
+    } catch (error) {
+      setProblem(`Could not read your courses from Canvas: ${(error as Error).message}`);
+      setStatus(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [allCourses, selected, layout]);
+
+  const start = useCallback(
+    async (useDownloads: boolean) => {
+      if (!plans || (!useDownloads && !root)) return;
+      planGeneration.current++; // a late Gradescope listing must not swap the plan mid-run
+      setBusy(true);
+      setProblem(null);
+      setResult(null);
+      abort.current = new AbortController();
+      setProgress(null);
+      try {
+        const sink = useDownloads ? downloadsSink() : folderSink(root as FileSystemDirectoryHandle, { downloadsFallback: layout.id === "archive" });
+        await rememberDirBindings(layout.id, plans); // each course keeps this folder from now on
+        const store = layout.id === "ingest" ? storageManifestStore() : folderManifestStore(sink);
+        const outcome = await runArchive(plans, layout, sink, store, {
+          signal: abort.current.signal,
+          onProgress: (done, total) => setProgress({ done, total }),
+        });
+        setResult(outcome);
+      } catch (error) {
+        setProblem(String(error));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [plans, root, layout],
+  );
+
+  const summary = plans ? summarize(plans) : null;
+  const ready = root && access === "granted";
+
+  return (
+    <div className="mx-auto max-w-3xl p-6 text-zinc-900 dark:text-zinc-100">
+      <h1 className="text-xl font-semibold">Course files</h1>
+      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+        Saves everything from your courses (module files, course files, pages, assignments, announcements, syllabus)
+        into a folder you choose, as Cornell/&lt;course&gt;/&lt;module&gt;/. Read-only: nothing in Canvas changes, and
+        nothing leaves this computer. Run it again any time: only new or changed items are saved.
+      </p>
+      <label className="mt-3 block text-sm">
+        Layout{" "}
+        <select
+          className="rounded border border-zinc-300 bg-transparent px-2 py-1 dark:border-zinc-600"
+          value={layoutId}
+          onChange={(e) => { setLayoutId(e.target.value as Layout["id"]); setPlans(null); setResult(null); }}
+        >
+          <option value="archive">Archive: Cornell/&lt;course&gt;/&lt;module&gt;/ (for browsing)</option>
+          <option value="ingest">HQ knowledge inbox: course-slug/NN-module/ + batch file</option>
+        </select>
+      </label>
+
+      {snapshot.error && <div className="mt-4"><ErrorBanner error={snapshot.error} canvasOrigin={DEFAULT_CANVAS_ORIGIN} /></div>}
+      {notice && <p className="mt-4 rounded-lg border border-zinc-400/50 bg-zinc-500/10 p-3 text-sm">{notice}</p>}
+      {problem && <p role="alert" className="mt-4 rounded-lg border border-red-400/50 bg-red-500/10 p-3 text-sm">{problem}</p>}
+
+      <section className="mt-6">
+        <h2 className="font-medium">1. Folder</h2>
+        {!root && (
+          <>
+            <p className="mt-1 text-sm text-zinc-500">Chrome will not let you pick Downloads, Documents or Desktop themselves; choose or create a folder inside one, e.g. Documents/School.</p>
+            <button type="button" className={`${button} mt-2`} onClick={choose}>Choose folder</button>
+          </>
+        )}
+        {root && (
+          <p className="mt-1 text-sm">
+            <strong>{root.name}</strong>{" "}
+            {access === "granted" ? "· ready" : "· Chrome needs you to allow access again"}{" "}
+            {access !== "granted" && <button type="button" className={linkButton} onClick={reconnect}>Reconnect folder</button>}{" "}
+            <button type="button" className={linkButton} onClick={choose}>Change</button>{" "}
+            <button type="button" className={linkButton} onClick={() => { void forgetRoot(); setRoot(null); }}>Forget</button>
+          </p>
+        )}
+      </section>
+
+      <section className="mt-6">
+        <h2 className="font-medium">2. Courses</h2>
+        {loading ? <Spinner label="Loading courses…" /> : courses.length === 0 ? (
+          <EmptyState>No active courses found. Sign in to Canvas and reload.</EmptyState>
+        ) : (
+          <ul className="mt-2 space-y-1">
+            {courses.map((course) => (
+              <li key={course.id}>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(course.id)}
+                    onChange={(e) => {
+                      const next = new Set(selected);
+                      if (e.target.checked) next.add(course.id);
+                      else next.delete(course.id);
+                      setChosen(next);
+                      setPlans(null);
+                    }}
+                  />
+                  {course.courseCode} {course.name !== course.courseCode && course.name}
+                  <span className="text-xs text-zinc-400">{course.term.code}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        <ShowAllCourses hiddenCount={filter.hidden.length} showAll={filter.showAll} onToggle={filter.toggle} />
+        <button type="button" className={`${button} mt-3`} disabled={busy || selected.size === 0} onClick={buildPlan}>
+          Preview what will be saved
+        </button>
+        {status && <p className="mt-2 text-sm text-zinc-500">{status}</p>}
+      </section>
+
+      {plans && summary && (
+        <section className="mt-6">
+          <h2 className="font-medium">3. Review</h2>
+          <p className="mt-1 text-sm">
+            {summary.items} items, {formatBytes(summary.bytes)}, from {summary.courses} courses. Items already saved and unchanged are skipped when you start.
+            {summary.skipped > 0 && ` ${summary.skipped} locked or unavailable files will be skipped.`}
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-zinc-600 dark:text-zinc-300">
+            {plans.map((plan) => (
+              <li key={plan.courseId}>{plan.dir.join("/")}/ · {plan.items.length} items</li>
+            ))}
+          </ul>
+          <button type="button" className={`${button} mt-3`} disabled={busy || !ready || summary.items === 0} onClick={() => start(false)}>
+            Save to {root?.name ?? "folder"}
+          </button>
+          {!ready && <p className="mt-1 text-sm text-zinc-500">Choose (or reconnect) a folder first.</p>}
+          {busy && <button type="button" className={`${linkButton} ml-3`} onClick={() => abort.current?.abort()}>Stop</button>}
+          {progress && busy && <p className="mt-2 text-sm tabular-nums">{progress.done} / {progress.total}</p>}
+        </section>
+      )}
+
+      {result && (
+        <section className="mt-6" aria-live="polite">
+          <h2 className="font-medium">Done</h2>
+          <p className="mt-1 text-sm">
+            {describeRun(result)}.{result.viaDownloads + result.alreadyInDownloads > 0 && ` ${result.viaDownloads + result.alreadyInDownloads} files are in the browser's Downloads folder (Downloads/Cornell/…, a name clash gets "(1)"), not in the archive folder, because their file host refused a direct read; the lines below list them. Move them in if you want them together.`} Took {(result.elapsedMs / 1000).toFixed(0)} s.{result.batch && ` Batch file: _batches/${result.batch}.`}
+          </p>
+          {looksBlockedByCors(result) && !layout.needsFolder && (
+            <div className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 p-3 text-sm">
+              <p>Chrome could not read the files directly, so your chosen folder cannot be used for this Canvas. You can still save them under your Downloads folder as Cornell/…:</p>
+              <button type="button" className={`${button} mt-2`} onClick={() => start(true)}>Save to Downloads instead</button>
+            </div>
+          )}
+          {result.failed + result.viaDownloads + result.alreadyInDownloads > 0 && (
+            <ul className="mt-2 max-h-48 overflow-auto text-xs text-zinc-500">
+              {result.outcomes.filter((o) => o.status !== "failed" && o.inDownloads !== undefined).slice(0, 50).map((o) => (
+                <li key={o.source}>{o.path.join("/")} — {IN_DOWNLOADS}: Downloads/{o.inDownloads}</li>
+              ))}
+              {result.outcomes.filter((o) => o.status === "failed").slice(0, 50).map((o) => (
+                <li key={o.source}>{o.path.join("/")} — {o.status === "failed" && o.message}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+      <Picker courses={courses} tasks={snapshot.tasks} root={root} ready={Boolean(ready)} />
+    </div>
+  );
+}
