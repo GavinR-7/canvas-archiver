@@ -9,9 +9,11 @@
 
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { popupAgenda } from "@/src/lib/popup-agenda";
 import { taskStatus } from "@/src/lib/task-status";
 import { describeDue } from "@/src/lib/time";
 import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
+import { PopupAgenda } from "@/src/ui/PopupAgenda";
 import { useNow } from "@/src/ui/useNow";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
@@ -37,6 +39,7 @@ export default function App() {
   const nextUp = tasks.find(
     (task) => task.dueAt !== null && new Date(task.dueAt).getTime() >= now.getTime(),
   );
+  const agenda = popupAgenda(tasks, now);
 
   return (
     <div className="w-[360px] bg-white p-4 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
@@ -80,6 +83,8 @@ export default function App() {
               {nextUp?.dueAt && <> · {describeDue(nextUp.dueAt, now)}</>}
             </p>
           )}
+
+          <PopupAgenda tasks={agenda.items} now={now} hidden={agenda.hidden} />
 
           <h2 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             Active courses ({courses.length})
