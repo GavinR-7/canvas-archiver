@@ -26,6 +26,11 @@ export interface ManifestEntry {
   method?: Method;
   /** For method "downloads": where the browser put the file, relative to the Downloads folder. The archive folder does not hold it. */
   savedTo?: string;
+  /**
+   * Ingest layout only: the bytes are staged but no batch file lists them yet, and HQ only reads batches.
+   * The next run stages the item again instead of calling it unchanged; the flag is cleared once a batch lists it.
+   */
+  unbatched?: true;
 }
 
 export interface CourseManifest {

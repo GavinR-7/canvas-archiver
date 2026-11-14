@@ -149,8 +149,10 @@ export async function runArchive(
     try {
       // A file the browser downloaded lives under Downloads, not in this folder: there is nothing here to verify.
       const onDisk = layout.verifyDisk && sink.keepsRecords && manifest.entries[item.source]?.method !== "downloads" ? await sink.size(item.path) : undefined;
-      const decision = keep ? decide(item, manifest.entries[item.source], onDisk) : "new";
       const prior = manifest.entries[item.source];
+      // Staged by an earlier ingest run that never wrote its batch: HQ cannot see it, so stage it again.
+      const stranded = layout.id === "ingest" && prior?.unbatched === true;
+      const decision = keep && !stranded ? decide(item, prior, onDisk) : "new";
       // Not re-downloaded (that would add a "(1)" copy each run), but never reported as present in the folder.
       if (decision === "unchanged") {
         return prior?.method === "downloads"
@@ -179,6 +181,7 @@ export async function runArchive(
         ...(result.method ? { method: result.method } : {}),
         ...(result.method === "downloads" ? { savedTo: result.savedTo ?? item.path.join("/") } : {}),
         ...(result.validator !== undefined ? { validator: result.validator } : {}),
+        ...(stage ? { unbatched: true as const } : {}),
       };
       if (result.method === "downloads") viaDownloads++;
       saved.push({
@@ -230,6 +233,13 @@ export async function runArchive(
     const name = batchFileName(batchAt, runId);
     await sink.writeText(["_batches", name], `${JSON.stringify(buildBatch(batchAt, saved, courses), null, 2)}\n`);
     batch = name;
+    // Only now can HQ see every listed file, so only now may a later run call them unchanged.
+    for (const record of saved) {
+      const folder = active.find((plan) => plan.folder === record.course);
+      const entry = folder ? manifests.get(folder.courseId)?.entries[record.source] : undefined;
+      if (entry) delete entry.unbatched;
+    }
+    await persist();
   }
 
   const count = (status: ItemOutcome["status"]) => outcomes.filter((o) => o.status === status).length;

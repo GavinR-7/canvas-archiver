@@ -20,7 +20,8 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
-const SLUG = /^[a-z0-9]+$/;
+// Letters and digits, plus the `-2` suffix the extension adds when two courses share a catalog code.
+const SLUG = /^[a-z0-9]+(-[0-9]+)?$/;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 /**

@@ -47,7 +47,9 @@ export function mergeTasks(tasks: Task[]): Task[] {
   const ordered = [...unique.values()].sort((a, b) => PRIORITY[a.source] - PRIORITY[b.source]);
   const kept: Task[] = [];
   for (const task of ordered) {
-    const twin = kept.find((k) => k.id !== task.id && sameDeadline(k, task));
+    // Twins are one deadline seen by two sources. Two records from the same source are distinct by their ids
+    // ("Homework 1" and "Homework 2" due the same day), however alike their titles.
+    const twin = kept.find((k) => k.id !== task.id && k.source !== task.source && sameDeadline(k, task));
     if (!twin) kept.push(task);
   }
   return kept.sort(byDueDate);

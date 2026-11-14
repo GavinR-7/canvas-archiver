@@ -403,6 +403,27 @@ describe("runArchive", () => {
     expect(disk.size).toBe(0);
   });
 
+  it("stages again after a batch write fails, so HQ never misses a file", async () => {
+    const { sink, disk } = memorySink();
+    const store = memoryStore();
+    let failBatch = true;
+    const flaky: FileSink = {
+      ...sink,
+      writeText: async (path, text) => {
+        if (failBatch && path[0] === "_batches") throw new Error("disk full");
+        return sink.writeText(path, text);
+      },
+    };
+    const at = new Date("2026-10-15T14:03:09Z");
+    await expect(runArchive(plansFor(sources, ingestLayout), ingestLayout, flaky, store, { now: () => at, runId: "aaaaaaaa" })).rejects.toThrow("disk full");
+    failBatch = false;
+    const retry = await runArchive(plansFor(sources, ingestLayout), ingestLayout, flaky, store, { now: () => at, runId: "bbbbbbbb" });
+    expect(retry).toMatchObject({ saved: 3, unchanged: 0, batch: "2026-10-15T140309-bbbbbbbb.json" });
+    expect(disk.has("_batches/2026-10-15T140309-bbbbbbbb.json")).toBe(true);
+    const after = await runArchive(plansFor(sources, ingestLayout), ingestLayout, flaky, store, { now: () => at, runId: "cccccccc" });
+    expect(after).toMatchObject({ saved: 0, unchanged: 3, batch: null });
+  });
+
   it("continues past a failure and reports it without leaking the URL", async () => {
     const { sink } = memorySink();
     const failing: FileSink = {

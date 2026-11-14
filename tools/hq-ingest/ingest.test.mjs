@@ -31,6 +31,7 @@ test("destination maps contract paths and rejects traversal", () => {
   assert.deepEqual(destination("ece3030/05-em-waves/lec05.pdf"), { course: "ece3030", relPath: "modules/05-em-waves/lec05.pdf" });
   assert.deepEqual(destination("ece3030/_syllabus/syllabus.html"), { course: "ece3030", relPath: "syllabus/syllabus.html" });
   assert.deepEqual(destination("ece3030/files/a.txt"), { course: "ece3030", relPath: "files/a.txt" });
+  assert.deepEqual(destination("cs3700-2/files/a.txt"), { course: "cs3700-2", relPath: "files/a.txt" });
   assert.equal(destination("ece3030/../x/a.txt"), null);
   assert.equal(destination("ECE 3030/files/a.txt"), null);
   assert.equal(destination("ece3030/random/a.txt"), null);

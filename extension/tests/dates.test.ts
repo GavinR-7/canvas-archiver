@@ -82,6 +82,10 @@ describe("mergeTasks", () => {
     expect(mergeTasks([a, task({ id: "b", title: "Prelim 1", kind: "exam", source: "syllabus" })])).toHaveLength(2);
     expect(sameDeadline(a, task({ id: "c", title: "Lab 3 report", dueAt: "2026-10-21T23:30:00Z" }))).toBe(false);
   });
+  it("keeps two same-source records with alike titles due the same day", () => {
+    const merged = mergeTasks([task({ id: "canvas:1", title: "Homework 1" }), task({ id: "canvas:2", title: "Homework 2" })]);
+    expect(merged.map((t) => t.id).sort()).toEqual(["canvas:1", "canvas:2"]);
+  });
   it("does not merge across courses", () => {
     expect(sameDeadline(task({ title: "Prelim 1" }), task({ id: "q", title: "Prelim 1", courseCode: "ECE 3140" }))).toBe(false);
   });
