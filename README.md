@@ -5,7 +5,7 @@ Gradescope and Ed Discussion in one place, on their own machine: what is due,
 every course file in a folder they chose, and an optional chat over their course
 text. Local-first and read-only. No backend, no account, no analytics.
 
-Built with WXT, React and TypeScript on Manifest V3. 492 unit tests.
+Built with WXT, React and TypeScript on Manifest V3. 494 unit tests.
 
 > **Status:** release candidate (PR #27), loaded unpacked. It has not been
 > through Chrome Web Store review, and the Gradescope, Ed and chat paths have not
@@ -110,14 +110,19 @@ that session can and cannot go.
 - **Credentials go to one host.** `assertCanvasOrigin` compares scheme, host and
   port exactly (`evil.canvas.cornell.edu` is rejected). The server-supplied `Link`
   `next` URL is checked before it is followed.
-- **File bytes never carry the session.** The authenticated call only asks Canvas
-  for a signed file URL. The download itself uses `credentials: "omit"`, and the
-  signed URL is not logged or stored.
+- **File bytes go cookie-less first.** The authenticated call only asks Canvas
+  for a signed file URL, and the download is tried with `credentials: "omit"`.
+  Only if that fails, and only when the URL is on the Canvas origin, is it retried
+  with the session. A URL on any other host never gets the session. The signed
+  URL is not logged or stored.
 - **Embedded images stay on the Canvas origin (T-532).** An image address comes
   from file metadata, not the page, so it is held to the same rule. An off-origin
-  address is refused before any request. Redirects are read one hop at a time, an
-  off-origin hop is refused, hops are capped at four, and neither the session nor
-  the browser downloader is used for them.
+  address is refused before any request, and images are fetched with
+  `credentials: "omit"` (no session, no browser downloader). Redirects are read
+  one hop at a time, an off-origin hop is refused, and hops are capped at four.
+  Caveat: when the browser hides a redirect (`opaqueredirect`), that hop is
+  re-fetched with `redirect: "follow"`, so the origin check does not see where it
+  went; the request is still cookie-less.
 - **No surprise network from the popup (T-548).** Opened off Canvas, the popup
   reads only the stored snapshot. It does not wake the worker or refresh, and the
   refresh button is disabled. One function, `readSnapshot`, decides whether a read
@@ -139,7 +144,7 @@ that session can and cannot go.
 cd extension
 npm ci
 npm run compile     # type check
-npm test            # 492 tests
+npm test            # 494 tests
 npm run build       # unpacked MV3 build in .output/chrome-mv3/
 ```
 

@@ -17,8 +17,8 @@ commands before you put a number on a resume; they will drift as the branch move
   per-course manifests) that re-downloads only changed files; both fail per
   source so one outage never blanks the rest.
 - Hardened the extension against credential leakage (exact-origin checks on
-  server-supplied URLs, cookie-less file downloads, redirect-capped image fetches,
-  no network from the popup off Canvas) and covered it with 492 automated tests
+  server-supplied URLs, cookie-less-first file downloads, redirect-capped image fetches,
+  no network from the popup off Canvas) and covered it with 494 automated tests
   across 38 files, plus type checking and a clean production build.
 
 ## Where each number comes from
@@ -27,7 +27,7 @@ commands before you put a number on a resume; they will drift as the branch move
 | --- | --- | --- |
 | 81 commits | `git rev-list --count origin/codex/canvas-v2-rc` | 81 |
 | 28 pull requests | `gh pr list --state all --limit 200 --json number \| python3 -c "import json,sys;print(len(json.load(sys.stdin)))"` | 28 (12 merged, 16 open) |
-| 492 tests, 38 files | `cd extension && npm test` | `Test Files 38 passed (38)`, `Tests 492 passed (492)` |
+| 494 tests, 38 files | `cd extension && npm test` | `Test Files 38 passed (38)`, `Tests 494 passed (494)` |
 | Type check | `cd extension && npm run compile` | exits 0, no output |
 | Production build | `cd extension && npm run build` | built, `Σ Total size: 2.06 MB` |
 
