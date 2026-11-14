@@ -1,94 +1,180 @@
-# canvas-archiver
+# Canvas Archiver
 
-Tools for getting your own Canvas LMS data out of Canvas and onto your own
-machine. Local-first: nothing leaves your browser or your disk.
+A Chrome extension that puts everything a Cornell student needs from Canvas,
+Gradescope and Ed Discussion in one place, on their own machine: what is due,
+every course file in a folder they chose, and an optional chat over their course
+text. Local-first and read-only. No backend, no account, no analytics.
 
-Two parts, in one repo:
+Built with WXT, React and TypeScript on Manifest V3. 492 unit tests.
 
-| Directory | What it is | Status |
-| --- | --- | --- |
-| [`extension/`](extension/) | Chrome extension (MV3, TypeScript, React) — the product | In development |
-| [`cli/`](cli/) | Python CLI — the reference implementation | **Frozen** |
+> **Status:** release candidate (PR #27), loaded unpacked. It has not been
+> through Chrome Web Store review, and the Gradescope, Ed and chat paths have not
+> yet been confirmed against a live account (see [Limits](#limits-stated-plainly)).
 
----
+## The problem
 
-## `extension/` — the product
+Cornell's Canvas gives students **no API tokens**. Cornell's own page says tokens
+"are basically equivalent to your username and password" and that student
+requests need a faculty sponsor, and the service was decommissioned in April 2024.
+So the usual route for a student tool (generate a token, call the REST API) is
+closed.
 
-A Chrome extension that reads your Canvas data using **the browser session you
-already have**. No tokens, no passwords, no backend, no analytics. Everything
-stays in extension storage on your machine.
+The real pain this leaves:
 
-Current milestone: a popup showing who you're signed in as and your active
-courses, plus a full-page "Upcoming" view of everything due in the next 14 days
-across all courses, including Gradescope assignments (some courses post only
-there). Roadmap: [`NEXT.md`](NEXT.md).
+- Deadlines live in three places. Canvas, Gradescope and Ed each hold some, and
+  CS 3700 posts assignments only on Gradescope. Exam dates often appear only in a
+  syllabus PDF or an Ed announcement.
+- Course files vanish when a term ends. There is no "download everything"
+  button, and files are scattered across modules, pages, assignments and
+  announcements.
 
-See [`extension/ARCHITECTURE.md`](extension/ARCHITECTURE.md) for the design, an
-MV3 primer, and the Canvas API knowledge carried over from the CLI.
+## The approach
 
----
+Use the session the student already has. A service worker makes `GET` requests
+to Canvas with the browser's own cookies, the same way Canvas's front end does.
+There is no token, no password, and no server. This was measured, not assumed:
+`extension/spike/` is a throwaway extension that answered the auth question
+before any product code was written (see
+[`extension/ARCHITECTURE.md`](extension/ARCHITECTURE.md)).
 
-## `cli/` — the reference implementation, frozen
+| Piece | What it does |
+| --- | --- |
+| Popup | Who you are signed in as, current-term courses, what is due in 14 days. Off Canvas it shows the stored snapshot only and prompts you to open Canvas. |
+| Upcoming | One list across Canvas, Gradescope and Ed with a source badge on each item. Duplicates across sources collapse. A separate **All exams** list reaches 240 days out. |
+| Files | Pick a folder once (File System Access API). Archives modules, course files, pages, assignments, announcements and syllabi into `Cornell/<course>/<module>/`, incrementally, with a manifest per course. Falls back to `Downloads/` if the browser blocks a write. |
+| Course browser | Tick individual files and download them. Page attachments and embedded images are saved beside their pages. |
+| Due-date scheduler | A 2-hour alarm refreshes dates. Optional, opt-in sync writes a `due.json` of upcoming deadlines to a GitHub repo you name ([contract](docs/DUE_JSON.md)). |
+| Week schedule | A week view of class times and due items. |
+| Course chat | Search your course text (no key needed), or ask questions with your own Anthropic key. Answers cite numbered passages and invented citations are flagged. Per-course opt-in. |
 
-A Python CLI that archives Canvas course content to a local folder tree. It
-reached Phase 1 (+ an auth rework) before the project pivoted to an extension:
-`login`, `logout`, `list-courses` and `status` work; `sync` was never
-implemented.
+## Architecture
 
-**It is not being developed further.** It stays in the repo because its 117
-tests and its `ARCHITECTURE.md` encode a lot of hard-won Canvas behaviour — the
-`Link`-header pagination rules, Canvas's habit of signalling throttling with
-`403` rather than `429`, the `calendar_events` type split, user-scoped planner
-items, and the structural read-only guarantee. The extension inherits all of
-it.
-
-```bash
-cd cli
-uv sync --extra dev
-uv run pytest            # 117 tests
-uv run canvas-archive --help
+```
+                       your browser (everything below runs here)
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                                                                        │
+ │  popup ─┐                                                              │
+ │  upcoming ─┤  runtime messages   ┌───────────────────────────┐         │
+ │  files ────┼───────────────────► │ service worker            │         │
+ │  browse ───┤  GET_SNAPSHOT /     │  - 2h alarm               │         │
+ │  chat ─────┤  REFRESH            │  - serialized sync        │         │
+ │  schedule ─┘                     │  - snapshot cache         │         │
+ │     │                            └──────┬─────────┬──────────┘         │
+ │     │ reads cache                       │         │                    │
+ │     ▼                                   │         │ opt-in only        │
+ │  chrome.storage.local  ◄────────────────┘         │                    │
+ │                                                   │                    │
+ │  Files page (extension page, user gesture)        │                    │
+ │   planner → runner → sink ─► chosen folder        │                    │
+ │              │  manifest per course               │                    │
+ └──────────────┼────────────────────────────────────┼────────────────────┘
+                │ GET, session cookie                │ your own key / token
+                ▼                                    ▼
+   canvas.cornell.edu · gradescope.com · edstem.org     api.github.com
+                                                        api.anthropic.com
 ```
 
-See [`cli/README.md`](cli/README.md) and
-[`cli/ARCHITECTURE.md`](cli/ARCHITECTURE.md).
+Decisions worth reading:
 
----
+- **Pure core, thin shell.** Planning, merging, parsing, retrieval and
+  scheduling are pure functions with unit tests. The browser pieces (storage,
+  folder, downloads) sit behind small interfaces, so the file runner is tested
+  without a browser.
+- **Why the File System Access API, not `chrome.downloads`.** `chrome.downloads`
+  can only write under the Downloads folder, so a user-chosen root is impossible.
+  The folder picker works only from an extension page, not the service worker, so
+  archiving runs in the Files page. Downloads stays as an honest fallback, and
+  the UI says when it was used. Reasoning is in [`docs/V2_SPEC.md`](docs/V2_SPEC.md).
+- **Incremental archive.** Each course has a manifest keyed by stable source id
+  (`canvas:file/<id>`), compared by modified time or content hash, plus a size
+  check on disk. A second run downloads only what changed. A course folder is
+  bound to its Canvas id so two same-named courses cannot collide.
+- **`Task` is the single contract.** Each new source (Gradescope, Ed, syllabus,
+  manual exams) adds a `TaskSource`, not another list.
+- **Data survives partial failure.** One source failing never blanks the others.
+  A source that did not read completely cannot replace cached dates, so a flaky
+  Ed call does not wipe real deadlines.
+- **Carried over from the CLI.** The Python CLI in [`cli/`](cli/) is frozen, but
+  its hard-won Canvas knowledge lives on: `Link`-header pagination (page size
+  defaults to 10, so `per_page=100`), throttling signalled by `403` rather than
+  `429`, assignment deadlines needing a separate `calendar_events` request, and
+  `planner/items` being user-scoped.
+
+## Security choices
+
+The extension holds a signed-in session, so most of the design is about where
+that session can and cannot go.
+
+- **Read-only, enforced in code.** One `canvasFetch` helper hard-codes `GET`.
+  No configuration changes that, so the extension never needs Canvas's CSRF token.
+- **Credentials go to one host.** `assertCanvasOrigin` compares scheme, host and
+  port exactly (`evil.canvas.cornell.edu` is rejected). The server-supplied `Link`
+  `next` URL is checked before it is followed.
+- **File bytes never carry the session.** The authenticated call only asks Canvas
+  for a signed file URL. The download itself uses `credentials: "omit"`, and the
+  signed URL is not logged or stored.
+- **Embedded images stay on the Canvas origin (T-532).** An image address comes
+  from file metadata, not the page, so it is held to the same rule. An off-origin
+  address is refused before any request. Redirects are read one hop at a time, an
+  off-origin hop is refused, hops are capped at four, and neither the session nor
+  the browser downloader is used for them.
+- **No surprise network from the popup (T-548).** Opened off Canvas, the popup
+  reads only the stored snapshot. It does not wake the worker or refresh, and the
+  refresh button is disabled. One function, `readSnapshot`, decides whether a read
+  may reach the network.
+- **Signed-out is quiet (T-535).** Signed-out services no longer write errors
+  into `chrome://extensions`; the popup tells you to open Canvas instead.
+- **Narrow permissions.** Host access is Canvas, Gradescope and Ed only. GitHub
+  and Anthropic access is requested at the moment you turn the feature on. No
+  `tabs`, no `<all_urls>`.
+- **Keys are removed when a feature is turned off.** The GitHub token and
+  Anthropic key leave storage when you switch the feature off or clear the field.
+- **AI is opt-in per course.** Course text is sent only for courses you tick,
+  only the retrieved passages, only to the provider with your own key.
+  See [`docs/PRIVACY.md`](docs/PRIVACY.md).
+
+## Run it
+
+```bash
+cd extension
+npm ci
+npm run compile     # type check
+npm test            # 492 tests
+npm run build       # unpacked MV3 build in .output/chrome-mv3/
+```
+
+Load `extension/.output/chrome-mv3/` at `chrome://extensions` (Developer mode,
+Load unpacked). Windows-side steps and first-run notes are in
+[`docs/CANVAS_V2_RC.md`](docs/CANVAS_V2_RC.md) and [`docs/SETUP.md`](docs/SETUP.md).
+To show it off, follow [`docs/demo-script.md`](docs/demo-script.md).
+
+## Limits, stated plainly
+
+- **Cornell only.** One Canvas origin is configured, kept in a single place so
+  other schools are a code change, not a rewrite.
+- **Not verified on a live account:** the Gradescope parser (written against
+  reconstructed markup), Ed's endpoints, the syllabus date extractor on real
+  syllabi, and the chat model call. Failures are isolated, so these degrade to
+  "source unavailable" instead of breaking Canvas.
+- **Chat reads Canvas text only.** PDFs and slides are not read yet.
+- **Exam dates from syllabi are labelled unconfirmed.** They are best-effort
+  text extraction.
+- **Policy.** Cornell's rules prohibit selling or distributing course materials
+  and say nothing on a personal browser extension either way. This tool keeps
+  files on the student's device and never sells or shares them. Check your
+  course's AI policy before using chat.
+- It is an independent project, not affiliated with Cornell, Instructure,
+  Gradescope or Ed.
 
 ## Repo layout
 
 ```
-canvas-archiver/
-  extension/           the Chrome extension
-    src/types/         Course and Task — the scheduler's contract
-    spike/             throwaway MV3 extension answering the auth question
-    ARCHITECTURE.md
-  cli/                 frozen Python reference implementation
-    src/canvas_archiver/
-    tests/
-    ARCHITECTURE.md
-  dev/
-    sync-to-windows.sh stage a build where Chrome-on-Windows can load it
+extension/            the Chrome extension (src/, entrypoints/, tests/, spike/)
+cli/                  frozen Python reference implementation (Canvas knowledge)
+tools/hq-ingest/      optional script that ingests the archive layout
+docs/                 spec, privacy policy, due.json contract, store notes
+NEXT.md               roadmap
 ```
 
----
-
-## Out of scope
-
-Deliberately not built, and listed here as future ideas rather than omissions:
-
-- Scheduler logic, and the downloader
-- AI features — that's the next project, and it will consume this data
-- Accounts, a backend, telemetry of any kind
-- Publishing to the Chrome Web Store
-- Writing anything to Canvas. Read-only, forever — enforced structurally, not
-  promised.
-
-## License
-
-MIT
-
-Optional setup (nightly feed folder, Ed, due.json): see [docs/SETUP.md](docs/SETUP.md).
-
-## Canvas v2 release candidate
-
-The integrated PR list, exact source heads, build commands and Windows Chrome loading steps are in [docs/CANVAS_V2_RC.md](docs/CANVAS_V2_RC.md).
+The Python CLI reached `login`, `list-courses` and `status` before the project
+pivoted to an extension; see [`cli/README.md`](cli/README.md).
