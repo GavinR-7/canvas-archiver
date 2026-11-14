@@ -115,14 +115,15 @@ that session can and cannot go.
   Only if that fails, and only when the URL is on the Canvas origin, is it retried
   with the session. A URL on any other host never gets the session. The signed
   URL is not logged or stored.
-- **Embedded images stay on the Canvas origin (T-532).** An image address comes
-  from file metadata, not the page, so it is held to the same rule. An off-origin
-  address is refused before any request, and images are fetched with
-  `credentials: "omit"` (no session, no browser downloader). Redirects are read
-  one hop at a time, an off-origin hop is refused, and hops are capped at four.
-  Caveat: when the browser hides a redirect (`opaqueredirect`), that hop is
-  re-fetched with `redirect: "follow"`, so the origin check does not see where it
-  went; the request is still cookie-less.
+- **Embedded images start on the Canvas origin and are fetched cookie-less (T-532).**
+  An image address comes from file metadata, not the page, so it is held to the
+  same rule. An off-origin starting address is refused before any request, and
+  images are fetched with `credentials: "omit"` (no session, no browser
+  downloader). Redirects the browser exposes are checked one hop at a time: an
+  off-origin hop is refused and hops are capped at four. Redirects the browser
+  hides (`opaqueredirect`) are not checked: that hop is re-fetched with
+  `redirect: "follow"`, so the destination and hop count are not enforced there.
+  The guarantee that holds in every case is that no session is sent.
 - **No surprise network from the popup (T-548).** Opened off Canvas, the popup
   reads only the stored snapshot. It does not wake the worker or refresh, and the
   refresh button is disabled. One function, `readSnapshot`, decides whether a read

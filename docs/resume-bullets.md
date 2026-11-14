@@ -17,7 +17,7 @@ commands before you put a number on a resume; they will drift as the branch move
   per-course manifests) that re-downloads only changed files; both fail per
   source so one outage never blanks the rest.
 - Hardened the extension against credential leakage (exact-origin checks on
-  server-supplied URLs, cookie-less-first file downloads, redirect-capped image fetches,
+  server-supplied URLs, cookie-less-first file downloads, cookie-less image fetches that refuse off-origin visible redirects,
   no network from the popup off Canvas) and covered it with 494 automated tests
   across 38 files, plus type checking and a clean production build.
 
