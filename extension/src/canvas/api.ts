@@ -7,8 +7,10 @@
 
 import type { CanvasUser, Course, Task } from "@/src/types/canvas";
 import { getAll, getOne } from "./client";
-import { AccessDeniedError, NotFoundError } from "./errors";
+import { AccessDeniedError, NotFoundError, CanvasError } from "./errors";
 import { normalizeCourse, normalizePlannerItem, normalizeUser } from "./normalize";
+import { hasApiError, type TaskRead } from "@/src/lib/source-read";
+import { taskWindow, inTaskWindow } from "@/src/lib/task-window";
 import { byDueDate } from "@/src/lib/task-status";
 import { termSortKey } from "./terms";
 
@@ -33,6 +35,9 @@ export async function fetchActiveCourses(): Promise<Course[]> {
     "include[]": ["term", "teachers"],
   });
 
+  if (raw.some((entry) => !entry || hasApiError(entry) || !Number.isSafeInteger(entry["id"]) || Number(entry["id"]) <= 0)) {
+    throw new CanvasError("Canvas returned an unreadable course list.");
+  }
   return raw
     .map(normalizeCourse)
     .filter((course) => course.id > 0)
@@ -59,35 +64,46 @@ export async function fetchUpcomingTasks(
   courses: Course[],
   days: number = UPCOMING_DAYS,
   now: Date = new Date(),
-): Promise<Task[]> {
-  const end = new Date(now);
-  end.setDate(end.getDate() + days);
+  overdueDays = 0,
+): Promise<TaskRead> {
+  const window = taskWindow(now, days, overdueDays);
 
   let raw: Record<string, unknown>[];
   try {
     raw = await getAll<Record<string, unknown>>("/planner/items", {
-      start_date: now.toISOString(),
-      end_date: end.toISOString(),
+      start_date: new Date(window.from).toISOString(),
+      end_date: new Date(window.to).toISOString(),
     });
   } catch (error) {
-    // A course with the feature disabled must not take the whole view down.
+    // This request is user-scoped. Denial is not proof that no course has deadlines.
     if (error instanceof AccessDeniedError || error instanceof NotFoundError) {
-      return [];
+      return { tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error };
     }
     throw error;
   }
 
+  const knownIgnored = new Set(["wiki_page", "planner_note", "calendar_event", "assessment_request"]);
+  if (raw.some((entry) => {
+    if (!entry || typeof entry !== "object" || hasApiError(entry)) return true;
+    if (knownIgnored.has(String(entry["plannable_type"]))) return false;
+    const item = entry["plannable"] as Record<string, unknown> | undefined;
+    return !["assignment", "quiz", "discussion_topic"].includes(String(entry["plannable_type"])) ||
+      !item || typeof item !== "object" || hasApiError(item) || typeof item["title"] !== "string" ||
+      !Number.isSafeInteger(entry["plannable_id"] ?? item["id"]) ||
+      !Object.hasOwn(entry, "plannable_date") ||
+      (item["due_at"] !== undefined && item["due_at"] !== null && (typeof item["due_at"] !== "string" || !Number.isFinite(Date.parse(item["due_at"])))) ||
+      (entry["plannable_date"] !== null && !Number.isFinite(Date.parse(String(entry["plannable_date"]))));
+  })) {
+    return { tasks: [], complete: false, unavailableCourseIds: courses.map((course) => course.id), error: new CanvasError("Canvas returned an unreadable planner collection.") };
+  }
   const lookup = new Map(courses.map((course) => [course.id, course]));
 
-  return raw
+  const tasks = raw
     .map((item) => normalizePlannerItem(item, lookup))
     .filter((task): task is Task => task !== null)
     // The planner respects its own window, but an item whose due date was
     // nudged after the fact can still arrive outside it.
-    .filter((task) => {
-      if (!task.dueAt) return false;
-      const due = new Date(task.dueAt).getTime();
-      return due >= now.getTime() && due <= end.getTime();
-    })
+    .filter((task) => inTaskWindow(task.dueAt, window))
     .sort(byDueDate);
+  return { tasks, complete: true, unavailableCourseIds: [], error: null };
 }

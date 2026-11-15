@@ -7,11 +7,16 @@
  * It asks the service worker for a snapshot and renders it.
  */
 
+import { UPCOMING_DAYS } from "@/src/canvas/api";
+import { taskWindow, tasksInWindow } from "@/src/lib/task-window";
+import { useEffect, useState } from "react";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
+import { OPEN_CANVAS_PROMPT, canvasTabIsActive } from "@/src/lib/canvas-tab";
 import { taskStatus } from "@/src/lib/task-status";
 import { describeDue } from "@/src/lib/time";
-import { EmptyState, ErrorBanner, Spinner } from "@/src/ui/components";
+import { EmptyState, ErrorBanner, ShowAllCourses, Spinner } from "@/src/ui/components";
+import { useCourseFilter } from "@/src/ui/useCourseFilter";
 import { useNow } from "@/src/ui/useNow";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
@@ -21,10 +26,40 @@ function openUpcoming() {
   void chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") });
 }
 
+function openChat() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("chat.html") });
+}
+
+function openSchedule() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("schedule.html") });
+}
+
+function openBrowse() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("browse.html") });
+}
+
+function openCanvas() {
+  void chrome.tabs.create({ url: DEFAULT_CANVAS_ORIGIN });
+}
+
+function openFiles() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("files.html") });
+}
+
 export default function App() {
-  const { snapshot, loading, refreshing, refresh } = useSnapshot();
+  // null until known, so the prompt does not flash on a Canvas tab.
+  const [onCanvas, setOnCanvas] = useState<boolean | null>(null);
+  useEffect(() => {
+    void canvasTabIsActive().then(setOnCanvas);
+  }, []);
+  // Off Canvas the popup only shows what is stored: no snapshot request, so nothing reaches the network until the person opens Canvas.
+  const { snapshot, loading, refreshing, refresh } = useSnapshot(onCanvas === null ? "wait" : onCanvas ? "network" : "cache");
   const now = useNow();
-  const { user, courses, tasks, error, gradescopeError } = snapshot;
+  const { user, tasks, error, gradescopeError } = snapshot;
+  const filter = useCourseFilter("popup", snapshot.courses);
+  const courses = filter.courses;
+
+  const upcoming = tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS));
 
   const needsAttention = tasks.filter((task) => {
     const status = taskStatus(task, now);
@@ -50,12 +85,25 @@ export default function App() {
         <button
           type="button"
           onClick={refresh}
-          disabled={refreshing}
+          disabled={refreshing || onCanvas !== true}
           className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </header>
+
+      {onCanvas === false && (
+        <div className="mb-3 flex items-center justify-between gap-2 rounded-md bg-zinc-100 px-3 py-2 text-xs dark:bg-zinc-800">
+          <span>{OPEN_CANVAS_PROMPT}</span>
+          <button
+            type="button"
+            onClick={openCanvas}
+            className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 font-medium hover:bg-white dark:border-zinc-600 dark:hover:bg-zinc-700"
+          >
+            Open Canvas
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-3">
@@ -115,13 +163,49 @@ export default function App() {
               ))}
             </ul>
           )}
+          <ShowAllCourses hiddenCount={filter.hidden.length} showAll={filter.showAll} onToggle={filter.toggle} />
 
           <button
             type="button"
             onClick={openUpcoming}
             className="mt-4 w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
-            Upcoming — next 14 days ({tasks.length})
+            Upcoming — next {UPCOMING_DAYS} days ({upcoming.length})
+          </button>
+          <button
+            type="button"
+            onClick={openFiles}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Save course files…
+          </button>
+          <button
+            type="button"
+            onClick={openBrowse}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Browse a class's files…
+          </button>
+          <button
+            type="button"
+            onClick={openChat}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Course chat…
+          </button>
+          <button
+            type="button"
+            onClick={openSchedule}
+            className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Week schedule…
+          </button>
+          <button
+            type="button"
+            onClick={() => void chrome.runtime.openOptionsPage()}
+            className="mt-2 w-full text-center text-xs text-zinc-500 underline underline-offset-2 hover:no-underline"
+          >
+            Settings (send deadlines to HQ)
           </button>
         </>
       )}
