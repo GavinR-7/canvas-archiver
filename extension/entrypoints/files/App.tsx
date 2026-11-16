@@ -33,8 +33,11 @@ import { useCourseFilter } from "@/src/ui/useCourseFilter";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 import Picker from "./Picker";
 import { runFeed } from "@/src/feed/run";
+import { runScheduledArchive } from "@/src/files/scheduled-run";
 
-const AUTO_FEED = new URLSearchParams(location.search).get("auto") === "feed";
+const AUTO = new URLSearchParams(location.search).get("auto");
+const AUTO_FEED = AUTO === "feed";
+const AUTO_ARCHIVE = AUTO === "archive";
 
 const button =
   "rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white";
@@ -74,12 +77,12 @@ export default function App() {
   // Opened by the nightly alarm: run the feed once, record the result, close.
   const ran = useRef(false);
   useEffect(() => {
-    if (!AUTO_FEED || loading || ran.current) return;
+    if ((!AUTO_FEED && !AUTO_ARCHIVE) || loading || ran.current) return;
     ran.current = true;
     void (async () => {
       setBusy(true);
-      setStatus("Nightly feed to HQ is running. This tab closes when it is done.");
-      const outcome = await runFeed(snapshot.courses);
+      setStatus(AUTO_FEED ? "Nightly feed to HQ is running. This tab closes when it is done." : "Scheduled archive is running. This tab closes when it is done.");
+      const outcome = AUTO_FEED ? await runFeed(snapshot.courses) : await runScheduledArchive(snapshot.courses);
       setStatus(outcome.message);
       setBusy(false);
       if (outcome.ok) setTimeout(() => window.close(), 3000);

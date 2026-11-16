@@ -18,6 +18,7 @@ import { DEFAULT_AI, loadAi, saveAi, withRetention as withAiRetention, type AiSe
 import { INBOX_KEY, loadRoot, pickRoot, requestRootAccess, rootAccess, saveRoot, type RootAccess } from "@/src/files/handle-store";
 import { DEFAULT_FEED, loadFeed, loadFeedStatus, saveFeed, type FeedSettings, type FeedStatus } from "@/src/feed/settings";
 import { loadSettings, loadStatus, saveSettings, withRetention, type SyncStatus } from "@/src/sync/settings";
+import ArchiveScheduleSettings from "./ArchiveSchedule";
 
 function ExamDates() {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -177,6 +178,8 @@ export default function App() {
   return (
     <div className="mx-auto max-w-xl p-6 text-zinc-900 dark:text-zinc-100">
       <h1 className="text-xl font-semibold">Settings</h1>
+
+      <ArchiveScheduleSettings />
 
       <section className="mt-6">
         <h2 className="font-medium">Privacy</h2>
