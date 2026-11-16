@@ -1,6 +1,8 @@
 import { isExamTask } from "@/src/dates/exams";
+import { easternDay } from "@/src/dates/merge";
 import { taskStatus } from "@/src/lib/task-status";
 import { inTaskWindow, taskWindow } from "@/src/lib/task-window";
+import { localDayKey } from "@/src/lib/time";
 import type { Task } from "@/src/types/canvas";
 
 function dueTime(task: Task): number {
@@ -15,6 +17,11 @@ function byKnownDueTime(a: Task, b: Task): number {
 /** Only Gradescope has its own numeric course IDs in the snapshot. */
 export function workCourseKey(source: Task["source"], courseId: number): string {
   return `${source === "gradescope" ? "gradescope" : "canvas"}:${courseId}`;
+}
+
+/** Timed deadlines follow the device; date-only deadlines keep their course day. */
+export function upcomingDayKey(dueAt: string, allDay: boolean): string {
+  return allDay ? easternDay(dueAt) : localDayKey(dueAt);
 }
 
 export function upcomingWork(

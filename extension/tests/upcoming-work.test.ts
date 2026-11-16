@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { upcomingWork } from "@/src/lib/upcoming-work";
+import { upcomingDayKey, upcomingWork } from "@/src/lib/upcoming-work";
+import { localDayKey } from "@/src/lib/time";
 import type { Task, TaskSubmission } from "@/src/types/canvas";
 
 const NOW = new Date("2026-11-16T17:00:00Z");
@@ -23,6 +24,13 @@ function submission(fields: Partial<TaskSubmission>): TaskSubmission {
 }
 
 describe("Upcoming work", () => {
+  it("keeps a date-only deadline on its Eastern course day", () => {
+    const dueAt = "2026-11-21T04:59:00Z";
+    expect(upcomingDayKey(dueAt, true)).toBe("2026-11-20");
+    expect(upcomingDayKey(dueAt, false)).toBe(localDayKey(dueAt));
+  });
+
+
   it("shows overdue and authoritative missing work once, including undated items", () => {
     const tasks = [
       task("missing without date", null, { submission: submission({ missing: true }) }),

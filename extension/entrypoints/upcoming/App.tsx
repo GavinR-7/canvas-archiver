@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { upcomingWork, workCourseKey } from "@/src/lib/upcoming-work";
+import { upcomingDayKey, upcomingWork, workCourseKey } from "@/src/lib/upcoming-work";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
@@ -19,38 +19,41 @@ import { ED_ORIGINS } from "@/src/config/ed";
 import { examsByCourse } from "@/src/dates/exams";
 import { loadManualExams, MANUAL_EXAMS_KEY, withManualExams, type ManualExams } from "@/src/dates/manual-exams";
 import { taskStatus } from "@/src/lib/task-status";
-import { formatDay, formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
+import { formatDay, formatTime, relativeDay, relativeDistance } from "@/src/lib/time";
 import { useNow } from "@/src/ui/useNow";
 import type { Task } from "@/src/types/canvas";
 import { EmptyState, ErrorBanner, KindBadge, SourceBadge, Spinner, StatusBadge } from "@/src/ui/components";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
-/** Group tasks by local calendar day, preserving due-date order. */
+const localNoon = (day: string) => `${day}T12:00:00`;
+
+/** Group by the displayed calendar day, preserving due-date order within each day. */
 function groupByDay(tasks: Task[]): [string, Task[]][] {
   const groups = new Map<string, Task[]>();
 
   for (const task of tasks) {
     if (!task.dueAt) continue;
-    const key = localDayKey(task.dueAt);
+    const key = upcomingDayKey(task.dueAt, task.allDay);
     const existing = groups.get(key);
     if (existing) existing.push(task);
     else groups.set(key, [task]);
   }
 
-  return [...groups.entries()];
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
 function TaskRow({ task, now, showDay = false }: { task: Task; now: Date; showDay?: boolean }) {
   const status = taskStatus(task, now);
   const dueAt = task.dueAt && Number.isFinite(Date.parse(task.dueAt)) ? task.dueAt : null;
   const time = dueAt ? (task.allDay ? "All day" : formatTime(dueAt)) : "No due date";
+  const dateTime = dueAt && task.allDay ? upcomingDayKey(dueAt, true) : dueAt;
 
   return (
     <li className="flex items-start gap-3 border-b border-zinc-200 py-3 last:border-0 dark:border-zinc-800">
       <div className="w-16 shrink-0 pt-0.5 text-xs tabular-nums text-zinc-500 sm:w-24 sm:text-sm dark:text-zinc-400">
-        {dueAt ? (
-          <time dateTime={dueAt}>
-            {showDay && <span className="block">{formatDay(dueAt)}</span>}
+        {dateTime ? (
+          <time dateTime={dateTime}>
+            {showDay && <span className="block">{formatDay(task.allDay ? localNoon(dateTime) : dateTime)}</span>}
             {time}
           </time>
         ) : time}
@@ -217,7 +220,7 @@ export default function App() {
                 {groups.map(([day, dayTasks]) => (
                   <section key={day}>
                     <h3 className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-                      {dayTasks[0]?.dueAt ? relativeDay(dayTasks[0].dueAt, now) : day}
+                      {relativeDay(localNoon(day), now)}
                     </h3>
                     <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
                       {dayTasks.map((task) => (
