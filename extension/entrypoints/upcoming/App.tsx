@@ -138,13 +138,13 @@ export default function App() {
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Upcoming</h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Next {UPCOMING_DAYS} days
-              {user && <> · {user.name}</>}
-              {fetchedAt && (
-                <> · updated {relativeDistance(fetchedAt, now)}</>
-              )}
-            </p>
+            {(user || fetchedAt) && (
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                {user?.name}
+                {user && fetchedAt && " · "}
+                {fetchedAt && <>Updated {relativeDistance(fetchedAt, now)}</>}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -205,25 +205,28 @@ export default function App() {
 
         {loading ? (
           <Spinner label="Loading your upcoming work…" />
-        ) : groups.length === 0 ? (
-          <EmptyState>
-            {showCompleted ? "Nothing" : "No open work"} due in the next {UPCOMING_DAYS} days.
-          </EmptyState>
         ) : (
-          <div className="space-y-6">
-            {groups.map(([day, dayTasks]) => (
-              <section key={day}>
-                <h2 className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-                  {dayTasks[0]?.dueAt ? relativeDay(dayTasks[0].dueAt, now) : day}
-                </h2>
-                <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  {dayTasks.map((task) => (
-                    <TaskRow key={task.id} task={task} now={now} />
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
+          <section aria-labelledby="upcoming-window">
+            <h2 id="upcoming-window" className="mb-3 text-sm font-semibold">Next {UPCOMING_DAYS} days</h2>
+            {groups.length === 0 ? (
+              <EmptyState>{showCompleted ? "Nothing" : "No open work"} due in this window.</EmptyState>
+            ) : (
+              <div className="space-y-6">
+                {groups.map(([day, dayTasks]) => (
+                  <section key={day}>
+                    <h3 className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+                      {dayTasks[0]?.dueAt ? relativeDay(dayTasks[0].dueAt, now) : day}
+                    </h3>
+                    <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+                      {dayTasks.map((task) => (
+                        <TaskRow key={task.id} task={task} now={now} />
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {!loading && (
