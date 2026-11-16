@@ -61,7 +61,7 @@ function TaskRow({ task, now, showDay = false }: { task: Task; now: Date; showDa
           href={task.htmlUrl}
           target="_blank"
           rel="noreferrer"
-          className="font-medium hover:underline"
+          className="break-words font-medium hover:underline"
         >
           {task.title}
         </a>
@@ -176,12 +176,12 @@ export default function App() {
 
         {!loading && (
           <div className="mb-5 flex flex-wrap items-end gap-x-5 gap-y-3">
-            <label className="grid gap-1 text-sm font-medium">
+            <label className="grid min-w-0 max-w-full gap-1 text-sm font-medium">
               Course
               <select
                 value={selectedCourse ?? ""}
                 onChange={(event) => setCourseId(event.target.value ? Number(event.target.value) : null)}
-                className="max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
+                className="min-w-0 max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
               >
                 <option value="">All courses</option>
                 {courses.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -243,7 +243,7 @@ export default function App() {
                   ) : (
                     <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
                       {list.map((task) => (
-                        <TaskRow key={task.id} task={task} now={now} />
+                        <TaskRow key={task.id} task={task} now={now} showDay />
                       ))}
                     </ul>
                   )}
