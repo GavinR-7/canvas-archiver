@@ -17,8 +17,14 @@ const STOP = new Set(["the", "a", "an", "of", "and", "for", "in", "on", "at", "t
 export const courseKey = (code: string) => code.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
-/** Local calendar day in Ithaca. An 11:59 PM deadline stays on its own day whatever the machine's zone. */
-export const easternDay = (iso: string) => dayFmt.format(new Date(iso));
+/** Calendar day in Ithaca. A source date without a time already identifies its own day. */
+export function easternDay(iso: string): string {
+  const date = new Date(iso);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso) && !Number.isNaN(date.getTime()) && date.toISOString().startsWith(iso)) {
+    return iso;
+  }
+  return dayFmt.format(date);
+}
 
 const EXAM_WORD = /prelim|midterm|mid-term|final|exam/i;
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { addDays, buildScheduleFile, layoutWeek, mondayOf, parseDays, parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule } from "@/src/schedule/model";
+import {
+  addDays, agendaBlocks, buildScheduleFile, formatScheduleTime, layoutTimedTiles, layoutWeek, mondayOf, parseDays,
+  parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule, weekDisplayRange, type Block,
+} from "@/src/schedule/model";
 import { schedulePath } from "@/src/sync/run";
 
 const TABLE = `| Course | Days | Time | Location |
@@ -58,6 +61,74 @@ describe("week layout", () => {
     expect(mondayOf("2026-10-18")).toBe("2026-10-12"); // Sunday
     expect(addDays("2026-10-26", 7)).toBe("2026-11-02");
   });
+  it("keeps normal daytime hours for a standard week", () => {
+    const week = layoutWeek("2026-10-12", classes, [
+      { id: "day", title: "All day", course: "X", dueAt: "2026-10-16T03:59:00Z", allDay: true },
+    ]);
+    expect(weekDisplayRange(week)).toEqual({ start: 7 * 60, end: 23 * 60 });
+  });
+
+  it("encloses extra-early classes and retains the true midnight and 11:59 PM deadlines", () => {
+    const week = layoutWeek("2026-10-12", [
+      { id: "early", course: "X", title: "Lab", days: ["mon"], start: "06:25", end: "07:10", location: "Room 1" },
+    ], [
+      { id: "midnight", title: "Midnight", course: "X", dueAt: "2026-10-12T04:00:00Z", allDay: false },
+      {
+        id: "late", title: "Late", course: "X", dueAt: "2026-10-19T03:59:00Z", allDay: false,
+        href: "https://canvas.example.test/courses/11/assignments/42",
+      },
+    ]);
+    expect(weekDisplayRange(week)).toEqual({ start: 0, end: 24 * 60 });
+    expect(week[0]!.blocks).toEqual([
+      expect.objectContaining({ id: "midnight", from: 0, to: 0 }),
+      expect.objectContaining({ id: "early@2026-10-12", from: 385, to: 430 }),
+    ]);
+    expect(week[6]!.blocks).toEqual([
+      expect.objectContaining({ id: "late", from: 1419, to: 1439, href: "https://canvas.example.test/courses/11/assignments/42" }),
+    ]);
+    expect(formatScheduleTime(0)).toBe("12:00 AM");
+    expect(formatScheduleTime(1439)).toBe("11:59 PM");
+    expect(formatScheduleTime(1440)).toBe("12:00 AM");
+  });
+
+  it("gives simultaneous 11:59 PM deadlines separate tiles", () => {
+    const [day] = layoutWeek("2026-10-12", [], ["a", "b"].map((id) => ({
+      id, title: id, course: "X", dueAt: "2026-10-13T03:59:00Z", allDay: false,
+      href: `https://canvas.example.test/tasks/${id}`,
+    })));
+    const tiles = layoutTimedTiles(day!.blocks, 23 * 60, 24 * 60, 0.8);
+    expect(tiles.map(({ lane, lanes, block }) => [lane, lanes, block.id])).toEqual([[0, 2, "a"], [1, 2, "b"]]);
+    expect(tiles.every(({ top, height }) => top >= 0 && top + height <= 48)).toBe(true);
+  });
+
+  it("sizes transitive overlaps together and allows adjacent tiles to use full width", () => {
+    const block = (id: string, from: number, to: number): Block => ({ id, from, to, label: id, kind: "class", detail: "" });
+    const tiles = layoutTimedTiles([
+      block("a", 0, 14),
+      block("b", 14, 16), block("c", 20, 22), block("d", 30, 35),
+      block("e", 59, 60), block("f", 56, 58),
+    ], 0, 60, 1);
+    expect(tiles.map(({ block, top, height, lane, lanes }) => [block.id, top, height, lane, lanes])).toEqual([
+      ["a", 0, 14, 0, 1],
+      ["b", 14, 14, 0, 2], ["c", 20, 14, 1, 2], ["d", 30, 14, 0, 2],
+      ["e", 46, 14, 0, 2], ["f", 46, 14, 1, 2],
+    ]);
+  });
+
+  it("orders the agenda by displayed time while preserving the timeline's marker placement", () => {
+    const [monday] = layoutWeek("2026-10-12", [
+      { id: "meeting", course: "X", title: "Lab", days: ["mon"], start: "09:00", end: "09:50", location: "" },
+    ], [
+      { id: "later", title: "At 9:15", course: "X", dueAt: "2026-10-12T13:15:00Z", allDay: false },
+      { id: "same-time", title: "At 9:00", course: "X", dueAt: "2026-10-12T13:00:00Z", allDay: false },
+      { id: "any-time", title: "Any time", course: "X", dueAt: "2026-10-12T18:00:00Z", allDay: true },
+    ]);
+    expect(agendaBlocks(monday!).map((block) => block.id)).toEqual([
+      "any-time", "meeting@2026-10-12", "same-time", "later",
+    ]);
+    expect(monday!.blocks.map((block) => block.id)).toEqual(["same-time", "later", "meeting@2026-10-12"]);
+  });
+
   it("places classes on their days and deadlines at Eastern time", () => {
     const week = layoutWeek("2026-10-12", classes, [
       { id: "d1", title: "HW 5", course: "ECE 3030", dueAt: "2026-10-16T01:00:00Z", allDay: false }, // Thu 9:00 pm EDT

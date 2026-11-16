@@ -11,7 +11,7 @@ vi.mock("@/src/ui/useSnapshot", () => ({ useSnapshot: () => ({ snapshot: state.s
 vi.mock("@/src/ui/useNow", () => ({ useNow: () => state.now }));
 
 describe("popup Upcoming count", () => {
-  it.each(["2026-10-25T12:00:00Z", "2026-03-01T12:00:00Z"])("matches the rendered fourteen-day page across DST from %s", (iso) => {
+  it.each(["2026-10-25T12:00:00Z", "2026-03-01T12:00:00Z"])("keeps the fourteen-day boundaries across DST from %s", (iso) => {
     state.now = new Date(iso);
     const window = taskWindow(state.now, 14);
     const course = normalizeCourse({ id: 1, name: "Fixture", course_code: "CS 1" });
@@ -24,9 +24,14 @@ describe("popup Upcoming count", () => {
     const popup = renderToStaticMarkup(createElement(Popup)).replace(/<[^>]+>/g, "");
     const upcoming = renderToStaticMarkup(createElement(Upcoming));
     expect(popup).toContain("Upcoming — next 14 days (" + tasksInWindow(tasks, window).length + ")");
-    expect(upcoming).toContain("Deadline 1");
-    expect(upcoming).toContain("Deadline 2");
-    expect(upcoming).not.toContain("Deadline 0");
+    const attention = upcoming.match(/<section aria-labelledby="needs-attention"[^>]*>(.*?)<\/section>/s)?.[1];
+    const dueWindow = upcoming.split('aria-labelledby="upcoming-window"')[1]?.split('aria-labelledby="all-exams"')[0];
+    expect(attention).toContain("Deadline 0");
+    expect(attention).not.toContain("Deadline 1");
+    expect(attention).not.toContain("Deadline 2");
+    expect(dueWindow).toContain("Deadline 1");
+    expect(dueWindow).toContain("Deadline 2");
+    expect(dueWindow).not.toContain("Deadline 0");
     expect(upcoming).not.toContain("Deadline 3");
   });
 });

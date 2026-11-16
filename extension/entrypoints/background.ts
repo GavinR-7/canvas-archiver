@@ -231,15 +231,20 @@ async function startFeed() {
 }
 
 const ARCHIVE_ALARM = "archive-schedule";
+let archiveScheduleUpdate = Promise.resolve();
 
-/** One alarm per chosen interval, or none while automatic archive is off. */
-async function scheduleArchive() {
-  const schedule = await loadArchiveSchedule();
-  await chrome.alarms.clear(ARCHIVE_ALARM);
-  const period = periodMinutes(schedule.frequency);
-  if (period !== null) {
-    void chrome.alarms.create(ARCHIVE_ALARM, { delayInMinutes: period, periodInMinutes: period });
-  }
+/** Preserve a matching alarm across worker restarts and changes to courses or destination. */
+function scheduleArchive() {
+  // Startup and settings notifications can overlap. Read the latest setting
+  // when each reconciliation starts, after the previous alarm operation finishes.
+  archiveScheduleUpdate = archiveScheduleUpdate.then(async () => {
+    const period = periodMinutes((await loadArchiveSchedule()).frequency);
+    if (period === null) {
+      await chrome.alarms.clear(ARCHIVE_ALARM);
+    } else if ((await chrome.alarms.get(ARCHIVE_ALARM))?.periodInMinutes !== period) {
+      await chrome.alarms.create(ARCHIVE_ALARM, { delayInMinutes: period, periodInMinutes: period });
+    }
+  }).catch((error: unknown) => logFailure("could not schedule automatic archive", error));
 }
 
 async function startArchive() {
@@ -275,7 +280,7 @@ export default defineBackground(() => {
     if (!existing) void chrome.alarms.create(REFRESH_ALARM, { delayInMinutes: 1, periodInMinutes: REFRESH_EVERY_MINUTES });
   });
   void scheduleFeed();
-  void scheduleArchive();
+  scheduleArchive();
   // First run: open a page that shows the disclosure (every page is gated).
   chrome.runtime.onInstalled.addListener(({ reason }) => {
     if (reason === "install") void chrome.tabs.create({ url: chrome.runtime.getURL("upcoming.html") });
@@ -283,7 +288,7 @@ export default defineBackground(() => {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes["feed.settings"]) void scheduleFeed();
-    if (changes[ARCHIVE_SCHEDULE_KEY]) void scheduleArchive();
+    if (changes[ARCHIVE_SCHEDULE_KEY]) scheduleArchive();
   });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === REFRESH_ALARM) void refreshAndSync();

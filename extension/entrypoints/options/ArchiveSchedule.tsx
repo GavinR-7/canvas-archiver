@@ -11,7 +11,6 @@ import {
   FREQUENCY_LABEL,
   loadArchiveSchedule,
   loadArchiveScheduleStatus,
-  periodMinutes,
   saveArchiveSchedule,
   ARCHIVE_FREQUENCIES,
   type ArchiveFrequency,
@@ -25,14 +24,6 @@ import { ShowAllCourses } from "@/src/ui/components";
 
 const selectClass = "mt-1 rounded border border-zinc-300 bg-transparent px-2 py-1 text-sm dark:border-zinc-600";
 const linkButton = "underline underline-offset-2";
-
-function intervalText(frequency: ArchiveFrequency): string {
-  const minutes = periodMinutes(frequency);
-  if (minutes === null) return "Off.";
-  if (minutes === 24 * 60) return "On. The next run is in one day, while Chrome is open.";
-  if (minutes === 3 * 24 * 60) return "On. The next run is in 3 days, while Chrome is open.";
-  return "On. The next run is in one week, while Chrome is open.";
-}
 
 export default function ArchiveScheduleSettings() {
   const [schedule, setSchedule] = useState<ArchiveSchedule>(DEFAULT_ARCHIVE_SCHEDULE);
@@ -62,7 +53,9 @@ export default function ArchiveScheduleSettings() {
     const saved = { ...next, courseIds: next.courseIds === null ? null : [...new Set(next.courseIds)] };
     await saveArchiveSchedule(saved);
     setSchedule(saved);
-    setNote(intervalText(saved.frequency));
+    setNote(saved.frequency === "off"
+      ? "Off."
+      : `Saved. Archives run ${FREQUENCY_LABEL[saved.frequency].toLowerCase()} while Chrome is open.`);
   };
 
   const chooseFolder = async () => {
@@ -110,9 +103,8 @@ export default function ArchiveScheduleSettings() {
     <section className="mt-6">
       <h2 className="font-medium">Automatic archive</h2>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        Off until you choose a schedule. When it is on, Chrome opens the Files page in the background and saves new or
-        changed Canvas files. Chrome has to be open. The first run waits one full interval. Gradescope handouts stay on
-        the Files page, where you can review them before saving.
+        Off until you choose a schedule. While Chrome is open, scheduled runs open the Files page in the background
+        and save new or changed Canvas files. Review and save Gradescope handouts from the Files page.
       </p>
 
       <label className="mt-3 block text-sm">

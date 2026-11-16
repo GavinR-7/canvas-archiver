@@ -141,6 +141,11 @@ export function sameSchedule(existing: string, next: ScheduleFile): boolean {
 
 export const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 
+export function formatScheduleTime(minute: number): string {
+  const hour = Math.floor(minute / 60) % 24;
+  return `${hour % 12 || 12}:${String(minute % 60).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
+}
+
 export interface Block {
   id: string;
   label: string;
@@ -149,6 +154,7 @@ export interface Block {
   from: number;
   to: number;
   kind: "class" | "deadline";
+  href?: string;
   unconfirmed?: boolean;
 }
 
@@ -167,6 +173,7 @@ export interface WeekDeadline {
   course: string;
   dueAt: string;
   allDay: boolean;
+  href?: string;
   unconfirmed?: boolean;
 }
 
@@ -199,15 +206,66 @@ export function layoutWeek(monday: string, classes: ClassMeeting[], deadlines: W
     const column = columns.find((col) => col.date === easternDay(d.dueAt));
     if (!column) continue;
     if (d.allDay) {
-      column.allDay.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "", from: 0, to: 0, kind: "deadline", unconfirmed: d.unconfirmed });
+      column.allDay.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "", from: 0, to: 0, kind: "deadline", href: d.href, unconfirmed: d.unconfirmed });
       continue;
     }
     const [h, m] = clockFmt.format(new Date(d.dueAt)).split(":").map(Number) as [number, number];
     const at = h * 60 + m;
-    column.blocks.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "due", from: Math.max(0, at - 20), to: at, kind: "deadline", unconfirmed: d.unconfirmed });
+    column.blocks.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "due", from: Math.max(0, at - 20), to: at, kind: "deadline", href: d.href, unconfirmed: d.unconfirmed });
   }
   for (const column of columns) column.blocks.sort((a, b) => a.from - b.from || a.id.localeCompare(b.id));
   return columns;
+}
+
+/** The grid gives deadlines a marker before they are due. Order the agenda by the displayed time. */
+export function agendaBlocks(day: DayColumn): Block[] {
+  const time = (block: Block) => block.kind === "deadline" ? block.to : block.from;
+  const timed = [...day.blocks].sort((a, b) => time(a) - time(b) || a.id.localeCompare(b.id));
+  return [...day.allDay, ...timed];
+}
+
+export interface TimedTile {
+  block: Block;
+  top: number;
+  height: number;
+  lane: number;
+  lanes: number;
+}
+
+/** Pack actual painted intervals, including minimum height at the bottom of the grid. */
+export function layoutTimedTiles(blocks: readonly Block[], start: number, end: number, scale: number): TimedTile[] {
+  const height = (end - start) * scale;
+  const tiles = blocks.map((block) => {
+    const top = Math.min((block.from - start) * scale, height - 14);
+    const bottom = Math.min(height, Math.max((block.to - start) * scale, top + 14));
+    return { block, top, bottom };
+  }).sort((a, b) => a.top - b.top || a.block.id.localeCompare(b.block.id));
+
+  let laneEnds: number[] = [];
+  let groupEnd = -Infinity;
+  const placed = tiles.map(({ block, top, bottom }) => {
+    if (top >= groupEnd) laneEnds = [];
+    const available = laneEnds.findIndex((laneEnd) => laneEnd <= top);
+    const lane = available === -1 ? laneEnds.length : available;
+    laneEnds[lane] = bottom;
+    groupEnd = Math.max(groupEnd, bottom);
+    // Every tile in this cluster keeps a reference to its final lane widths.
+    return { block, top, height: bottom - top, lane, laneEnds };
+  });
+  return placed.map(({ laneEnds: group, ...tile }) => ({ ...tile, lanes: group.length }));
+}
+
+/** Default to daytime hours and expand to include every timed block for this week. */
+export function weekDisplayRange(columns: readonly DayColumn[]): { start: number; end: number } {
+  let start = 7 * 60;
+  let end = 23 * 60;
+  for (const column of columns) {
+    for (const block of column.blocks) {
+      start = Math.min(start, Math.floor(block.from / 60) * 60);
+      end = Math.max(end, Math.ceil(block.to / 60) * 60);
+    }
+  }
+  return { start, end };
 }
 
 // --- storage ---------------------------------------------------------------

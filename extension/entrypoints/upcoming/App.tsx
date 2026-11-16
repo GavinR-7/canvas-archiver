@@ -6,12 +6,12 @@
  * has the same origin and permissions as the popup, but a full tab's worth of
  * room and a lifetime that does not end when focus moves elsewhere.
  *
- * Everything due in the next 14 days, across every course, sorted by due date
- * and grouped by local calendar day.
+ * Open work due in the next 14 days, plus missing and overdue tasks in the
+ * snapshot. Filter by course or include completed work as needed.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { tasksInWindow, taskWindow } from "@/src/lib/task-window";
+import { upcomingDayKey, upcomingWork, workCourseKey } from "@/src/lib/upcoming-work";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
@@ -19,45 +19,52 @@ import { ED_ORIGINS } from "@/src/config/ed";
 import { examsByCourse } from "@/src/dates/exams";
 import { loadManualExams, MANUAL_EXAMS_KEY, withManualExams, type ManualExams } from "@/src/dates/manual-exams";
 import { taskStatus } from "@/src/lib/task-status";
-import { formatTime, localDayKey, relativeDay, relativeDistance } from "@/src/lib/time";
+import { formatDay, formatTime, relativeDay, relativeDistance } from "@/src/lib/time";
 import { useNow } from "@/src/ui/useNow";
 import type { Task } from "@/src/types/canvas";
 import { EmptyState, ErrorBanner, KindBadge, SourceBadge, Spinner, StatusBadge } from "@/src/ui/components";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
-/** Group tasks by local calendar day, preserving due-date order. */
+const localNoon = (day: string) => `${day}T12:00:00`;
+
+/** Group by the displayed calendar day, preserving due-date order within each day. */
 function groupByDay(tasks: Task[]): [string, Task[]][] {
   const groups = new Map<string, Task[]>();
 
   for (const task of tasks) {
     if (!task.dueAt) continue;
-    const key = localDayKey(task.dueAt);
+    const key = upcomingDayKey(task.dueAt, task.allDay);
     const existing = groups.get(key);
     if (existing) existing.push(task);
     else groups.set(key, [task]);
   }
 
-  return [...groups.entries()];
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function TaskRow({ task, now }: { task: Task; now: Date }) {
+function TaskRow({ task, now, showDay = false }: { task: Task; now: Date; showDay?: boolean }) {
   const status = taskStatus(task, now);
+  const dueAt = task.dueAt && Number.isFinite(Date.parse(task.dueAt)) ? task.dueAt : null;
+  const time = dueAt ? (task.allDay ? "All day" : formatTime(dueAt)) : "No due date";
+  const dateTime = dueAt && task.allDay ? upcomingDayKey(dueAt, true) : dueAt;
 
   return (
     <li className="flex items-start gap-3 border-b border-zinc-200 py-3 last:border-0 dark:border-zinc-800">
-      <time
-        className="w-20 shrink-0 pt-0.5 text-sm tabular-nums text-zinc-500 dark:text-zinc-400"
-        dateTime={task.dueAt ?? undefined}
-      >
-        {task.dueAt ? formatTime(task.dueAt) : "—"}
-      </time>
+      <div className="w-16 shrink-0 pt-0.5 text-xs tabular-nums text-zinc-500 sm:w-24 sm:text-sm dark:text-zinc-400">
+        {dateTime ? (
+          <time dateTime={dateTime}>
+            {showDay && <span className="block">{formatDay(task.allDay ? localNoon(dateTime) : dateTime)}</span>}
+            {time}
+          </time>
+        ) : time}
+      </div>
 
       <div className="min-w-0 flex-1">
         <a
           href={task.htmlUrl}
           target="_blank"
           rel="noreferrer"
-          className="font-medium hover:underline"
+          className="break-words font-medium hover:underline"
         >
           {task.title}
         </a>
@@ -79,9 +86,9 @@ function TaskRow({ task, now }: { task: Task; now: Date }) {
 
       <div className="flex shrink-0 flex-col items-end gap-1">
         <StatusBadge status={status} />
-        {task.dueAt && (
+        {dueAt && !task.allDay && (
           <span className="text-[11px] text-zinc-400">
-            {relativeDistance(task.dueAt, now)}
+            {relativeDistance(dueAt, now)}
           </span>
         )}
       </div>
@@ -95,6 +102,20 @@ export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
   const { tasks, error, gradescopeError, edError, fetchedAt, user } = snapshot;
+  const [courseKey, setCourseKey] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
+  const courses = useMemo(() => {
+    const names = new Map(snapshot.courses.filter((course) => !course.restricted)
+      .map((course) => [workCourseKey("canvas", course.id), course.courseCode || course.name]));
+    for (const task of tasks) {
+      const key = workCourseKey(task.source, task.courseId);
+      if (names.has(key)) continue;
+      const name = task.courseCode || task.courseName;
+      names.set(key, task.source === "gradescope" ? `${name} (Gradescope)` : name);
+    }
+    return [...names].sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
+  }, [snapshot.courses, tasks]);
+  const selectedCourse = courses.some(([key]) => key === courseKey) ? courseKey : null;
   // Dates typed in settings show at once, without waiting for the next sync.
   const [manual, setManual] = useState<ManualExams>({});
   useEffect(() => {
@@ -110,7 +131,11 @@ export default function App() {
 
   // `now` is in the dependency list so grouping headings re-derive when the
   // clock crosses midnight, not only when the data changes.
-  const groups = useMemo(() => groupByDay(tasksInWindow(tasks, taskWindow(now, UPCOMING_DAYS))), [tasks, now]);
+  const work = useMemo(
+    () => upcomingWork(tasks, now, UPCOMING_DAYS, selectedCourse, showCompleted),
+    [tasks, now, selectedCourse, showCompleted],
+  );
+  const groups = useMemo(() => groupByDay(work.upcoming), [work.upcoming]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -118,13 +143,13 @@ export default function App() {
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Upcoming</h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Next {UPCOMING_DAYS} days
-              {user && <> · {user.name}</>}
-              {fetchedAt && (
-                <> · updated {relativeDistance(fetchedAt, now)}</>
-              )}
-            </p>
+            {(user || fetchedAt) && (
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                {user?.name}
+                {user && fetchedAt && " · "}
+                {fetchedAt && <>Updated {relativeDistance(fetchedAt, now)}</>}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -154,28 +179,59 @@ export default function App() {
           </div>
         )}
 
+        {!loading && (
+          <div className="mb-5 flex flex-wrap items-end gap-x-5 gap-y-3">
+            <label className="grid min-w-0 max-w-full gap-1 text-sm font-medium">
+              Course
+              <select
+                value={selectedCourse ?? ""}
+                onChange={(event) => setCourseKey(event.target.value)}
+                className="min-w-0 max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
+              >
+                <option value="">All courses</option>
+                {courses.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 py-1.5 text-sm">
+              <input type="checkbox" checked={showCompleted} onChange={(event) => setShowCompleted(event.target.checked)} />
+              Include submitted and graded
+            </label>
+          </div>
+        )}
+
+        {!loading && work.attention.length > 0 && (
+          <section aria-labelledby="needs-attention" className="mb-7">
+            <h2 id="needs-attention" className="mb-1 text-sm font-semibold">Needs attention</h2>
+            <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+              {work.attention.map((task) => <TaskRow key={task.id} task={task} now={now} showDay />)}
+            </ul>
+          </section>
+        )}
+
         {loading ? (
           <Spinner label="Loading your upcoming work…" />
-        ) : groups.length === 0 ? (
-          <EmptyState>
-            Nothing due in the next {UPCOMING_DAYS} days.
-            {!error && " Enjoy it."}
-          </EmptyState>
         ) : (
-          <div className="space-y-6">
-            {groups.map(([day, dayTasks]) => (
-              <section key={day}>
-                <h2 className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-                  {dayTasks[0]?.dueAt ? relativeDay(dayTasks[0].dueAt, now) : day}
-                </h2>
-                <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
-                  {dayTasks.map((task) => (
-                    <TaskRow key={task.id} task={task} now={now} />
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
+          <section aria-labelledby="upcoming-window">
+            <h2 id="upcoming-window" className="mb-3 text-sm font-semibold">Next {UPCOMING_DAYS} days</h2>
+            {groups.length === 0 ? (
+              <EmptyState>{showCompleted ? "Nothing" : "No open work"} due in this window.</EmptyState>
+            ) : (
+              <div className="space-y-6">
+                {groups.map(([day, dayTasks]) => (
+                  <section key={day}>
+                    <h3 className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+                      {relativeDay(localNoon(day), now)}
+                    </h3>
+                    <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+                      {dayTasks.map((task) => (
+                        <TaskRow key={task.id} task={task} now={now} />
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {!loading && (
@@ -183,6 +239,7 @@ export default function App() {
             <h2 id="all-exams" className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
               All exams
             </h2>
+            {exams.length === 0 && <p className="text-sm text-zinc-500 dark:text-zinc-400">No exam dates found.</p>}
             <div className="space-y-4">
               {exams.map(({ course, exams: list }) => (
                 <div key={course.id}>
@@ -194,7 +251,7 @@ export default function App() {
                   ) : (
                     <ul className="rounded-lg border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
                       {list.map((task) => (
-                        <TaskRow key={task.id} task={task} now={now} />
+                        <TaskRow key={task.id} task={task} now={now} showDay />
                       ))}
                     </ul>
                   )}
