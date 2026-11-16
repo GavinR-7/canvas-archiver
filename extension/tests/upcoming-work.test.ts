@@ -27,6 +27,7 @@ describe("Upcoming work", () => {
   it("keeps a date-only deadline on its Eastern course day", () => {
     const dueAt = "2026-11-21T04:59:00Z";
     expect(upcomingDayKey(dueAt, true)).toBe("2026-11-20");
+    expect(upcomingDayKey("2026-11-20", true)).toBe("2026-11-20");
     expect(upcomingDayKey(dueAt, false)).toBe(localDayKey(dueAt));
   });
 
