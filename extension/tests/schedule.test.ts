@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDays, buildScheduleFile, formatScheduleTime, layoutWeek, mondayOf, parseDays,
+  addDays, agendaBlocks, buildScheduleFile, formatScheduleTime, layoutWeek, mondayOf, parseDays,
   parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule, weekDisplayRange,
 } from "@/src/schedule/model";
 import { schedulePath } from "@/src/sync/run";
@@ -89,6 +89,20 @@ describe("week layout", () => {
     expect(formatScheduleTime(0)).toBe("12:00 AM");
     expect(formatScheduleTime(1439)).toBe("11:59 PM");
     expect(formatScheduleTime(1440)).toBe("12:00 AM");
+  });
+
+  it("orders the agenda by displayed time while preserving the timeline's marker placement", () => {
+    const [monday] = layoutWeek("2026-10-12", [
+      { id: "meeting", course: "X", title: "Lab", days: ["mon"], start: "09:00", end: "09:50", location: "" },
+    ], [
+      { id: "later", title: "At 9:15", course: "X", dueAt: "2026-10-12T13:15:00Z", allDay: false },
+      { id: "same-time", title: "At 9:00", course: "X", dueAt: "2026-10-12T13:00:00Z", allDay: false },
+      { id: "any-time", title: "Any time", course: "X", dueAt: "2026-10-12T18:00:00Z", allDay: true },
+    ]);
+    expect(agendaBlocks(monday!).map((block) => block.id)).toEqual([
+      "any-time", "meeting@2026-10-12", "same-time", "later",
+    ]);
+    expect(monday!.blocks.map((block) => block.id)).toEqual(["same-time", "later", "meeting@2026-10-12"]);
   });
 
   it("places classes on their days and deadlines at Eastern time", () => {

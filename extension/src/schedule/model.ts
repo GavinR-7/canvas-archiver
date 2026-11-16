@@ -217,6 +217,13 @@ export function layoutWeek(monday: string, classes: ClassMeeting[], deadlines: W
   return columns;
 }
 
+/** The grid gives deadlines a marker before they are due. Order the agenda by the displayed time. */
+export function agendaBlocks(day: DayColumn): Block[] {
+  const time = (block: Block) => block.kind === "deadline" ? block.to : block.from;
+  const timed = [...day.blocks].sort((a, b) => time(a) - time(b) || a.id.localeCompare(b.id));
+  return [...day.allDay, ...timed];
+}
+
 /** Default to daytime hours and expand to include every timed block for this week. */
 export function weekDisplayRange(columns: readonly DayColumn[]): { start: number; end: number } {
   let start = 7 * 60;

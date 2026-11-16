@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { easternDay } from "@/src/dates/merge";
 import {
-  addDays, DAYS, formatScheduleTime, layoutWeek, loadClasses, minutes, mondayOf,
+  addDays, agendaBlocks, DAYS, formatScheduleTime, layoutWeek, loadClasses, minutes, mondayOf,
   parseScheduleTable, saveClasses, weekDisplayRange, type Block, type ClassMeeting, type DayColumn,
 } from "@/src/schedule/model";
 import { useSnapshot } from "@/src/ui/useSnapshot";
@@ -150,7 +150,7 @@ function Agenda({ columns }: { columns: DayColumn[] }) {
         <div key={day.date}>
           <h2 className="mb-1 text-sm font-semibold">{dayName(day.date)}</h2>
           <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 px-3 dark:divide-zinc-800 dark:border-zinc-800">
-            {[...day.allDay, ...day.blocks].map((block, index) => (
+            {agendaBlocks(day).map((block, index) => (
               <li key={block.id} className="py-2 text-sm">
                 <div className="break-words font-medium"><BlockName block={block} /></div>
                 <p className="text-xs text-zinc-600 dark:text-zinc-400">
