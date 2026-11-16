@@ -141,6 +141,11 @@ export function sameSchedule(existing: string, next: ScheduleFile): boolean {
 
 export const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 
+export function formatScheduleTime(minute: number): string {
+  const hour = Math.floor(minute / 60) % 24;
+  return `${hour % 12 || 12}:${String(minute % 60).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
+}
+
 export interface Block {
   id: string;
   label: string;
@@ -149,6 +154,7 @@ export interface Block {
   from: number;
   to: number;
   kind: "class" | "deadline";
+  href?: string;
   unconfirmed?: boolean;
 }
 
@@ -167,6 +173,7 @@ export interface WeekDeadline {
   course: string;
   dueAt: string;
   allDay: boolean;
+  href?: string;
   unconfirmed?: boolean;
 }
 
@@ -199,15 +206,28 @@ export function layoutWeek(monday: string, classes: ClassMeeting[], deadlines: W
     const column = columns.find((col) => col.date === easternDay(d.dueAt));
     if (!column) continue;
     if (d.allDay) {
-      column.allDay.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "", from: 0, to: 0, kind: "deadline", unconfirmed: d.unconfirmed });
+      column.allDay.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "", from: 0, to: 0, kind: "deadline", href: d.href, unconfirmed: d.unconfirmed });
       continue;
     }
     const [h, m] = clockFmt.format(new Date(d.dueAt)).split(":").map(Number) as [number, number];
     const at = h * 60 + m;
-    column.blocks.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "due", from: Math.max(0, at - 20), to: at, kind: "deadline", unconfirmed: d.unconfirmed });
+    column.blocks.push({ id: d.id, label: `${d.course}: ${d.title}`, detail: "due", from: Math.max(0, at - 20), to: at, kind: "deadline", href: d.href, unconfirmed: d.unconfirmed });
   }
   for (const column of columns) column.blocks.sort((a, b) => a.from - b.from || a.id.localeCompare(b.id));
   return columns;
+}
+
+/** Default to daytime hours and expand to include every timed block for this week. */
+export function weekDisplayRange(columns: readonly DayColumn[]): { start: number; end: number } {
+  let start = 7 * 60;
+  let end = 23 * 60;
+  for (const column of columns) {
+    for (const block of column.blocks) {
+      start = Math.min(start, Math.floor(block.from / 60) * 60);
+      end = Math.max(end, Math.ceil(block.to / 60) * 60);
+    }
+  }
+  return { start, end };
 }
 
 // --- storage ---------------------------------------------------------------

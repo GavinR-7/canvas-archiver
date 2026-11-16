@@ -8,17 +8,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { easternDay } from "@/src/dates/merge";
-import { addDays, DAYS, layoutWeek, loadClasses, mondayOf, parseScheduleTable, saveClasses, type Block, type ClassMeeting } from "@/src/schedule/model";
+import {
+  addDays, DAYS, formatScheduleTime, layoutWeek, loadClasses, minutes, mondayOf,
+  parseScheduleTable, saveClasses, weekDisplayRange, type Block, type ClassMeeting, type DayColumn,
+} from "@/src/schedule/model";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
-const START = 7 * 60;
-const END = 23 * 60;
 const PX = 0.8; // pixels per minute
-const dayName = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-const clock = (min: number) => {
-  const h = Math.floor(min / 60);
-  return `${((h + 11) % 12) + 1}:${String(min % 60).padStart(2, "0")}${h < 12 ? "a" : "p"}`;
-};
+const dayName = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", {
+  weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
+});
+const blockTime = (block: Block) => block.kind === "deadline"
+  ? formatScheduleTime(block.to)
+  : `${formatScheduleTime(block.from)}–${formatScheduleTime(block.to)}`;
 
 export default function App() {
   const { snapshot } = useSnapshot();
@@ -35,7 +37,10 @@ export default function App() {
       layoutWeek(
         week,
         classes,
-        snapshot.tasks.filter((t) => t.dueAt).map((t) => ({ id: t.id, title: t.title, course: t.courseCode || t.courseName, dueAt: t.dueAt as string, allDay: t.allDay, unconfirmed: t.unconfirmed })),
+        snapshot.tasks.flatMap((task) => task.dueAt ? [{
+          id: task.id, title: task.title, course: task.courseCode || task.courseName,
+          dueAt: task.dueAt, allDay: task.allDay, href: task.htmlUrl, unconfirmed: task.unconfirmed,
+        }] : []),
       ),
     [week, classes, snapshot.tasks],
   );
@@ -58,11 +63,14 @@ export default function App() {
     setClasses(next);
   };
 
-  const hours = Array.from({ length: (END - START) / 60 + 1 }, (_, i) => START + i * 60);
+  const { start, end } = weekDisplayRange(columns);
+  const height = (end - start) * PX;
+  const hours = Array.from({ length: (end - start) / 60 + 1 }, (_, i) => start + i * 60);
   return (
     <div className="mx-auto max-w-6xl p-6 text-zinc-900 dark:text-zinc-100">
       <h1 className="text-xl font-semibold">Week schedule</h1>
-      <div className="mt-3 flex items-center gap-3 text-sm">
+      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Times in Eastern.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         <button type="button" className="underline" onClick={() => setWeek(addDays(week, -7))}>← Previous</button>
         <strong>Week of {dayName(week)}</strong>
         <button type="button" className="underline" onClick={() => setWeek(addDays(week, 7))}>Next →</button>
@@ -75,27 +83,30 @@ export default function App() {
         </p>
       )}
 
-      <div className="mt-4 overflow-x-auto">
-        <div className="grid min-w-[760px]" style={{ gridTemplateColumns: "44px repeat(7, minmax(0, 1fr))" }}>
+      <Agenda columns={columns} />
+      <div className="mt-4 hidden overflow-x-auto pb-2 lg:block">
+        <div className="grid min-w-[760px]" style={{ gridTemplateColumns: "62px repeat(7, minmax(0, 1fr))" }}>
           <div />
           {columns.map((c, i) => (
             <div key={c.date} className="border-b border-zinc-200 px-1 pb-1 text-center text-xs font-medium dark:border-zinc-700">
-              {dayName(c.date).replace(/^\w+,?\s*/, (m) => `${m}`)}
-              {c.allDay.map((d) => (
-                <div key={d.id} className={`mt-1 truncate rounded px-1 text-left text-[11px] ${d.unconfirmed ? "bg-amber-500/20" : "bg-rose-500/20"}`} title={d.label}>{d.label}</div>
+              {dayName(c.date)}
+              {c.allDay.map((block) => (
+                <div key={block.id} className={`mt-1 truncate rounded px-1 text-left text-[11px] ${block.unconfirmed ? "bg-amber-500/20" : "bg-rose-500/20"}`} title={`All day · ${block.label}`}>
+                  <BlockName block={block} />
+                </div>
               ))}
               <span className="sr-only">{DAYS[i]}</span>
             </div>
           ))}
-          <div className="relative" style={{ height: (END - START) * PX }}>
+          <div className="relative" style={{ height }}>
             {hours.map((h) => (
-              <span key={h} className="absolute right-1 -translate-y-1/2 text-[10px] text-zinc-400" style={{ top: (h - START) * PX }}>{clock(h)}</span>
+              <span key={h} className="absolute right-1 -translate-y-1/2 text-[10px] text-zinc-500" style={{ top: (h - start) * PX }}>{formatScheduleTime(h)}</span>
             ))}
           </div>
           {columns.map((c) => (
-            <div key={c.date} className="relative border-l border-zinc-200 dark:border-zinc-700" style={{ height: (END - START) * PX }}>
-              {hours.map((h) => <div key={h} className="absolute inset-x-0 border-t border-zinc-100 dark:border-zinc-800" style={{ top: (h - START) * PX }} />)}
-              {c.blocks.map((b) => <BlockView key={b.id} block={b} />)}
+            <div key={c.date} className="relative border-l border-zinc-200 dark:border-zinc-700" style={{ height }}>
+              {hours.map((h) => <div key={h} className="absolute inset-x-0 border-t border-zinc-100 dark:border-zinc-800" style={{ top: (h - start) * PX }} />)}
+              {c.blocks.map((block) => <BlockView key={block.id} block={block} start={start} height={height} />)}
             </div>
           ))}
         </div>
@@ -106,7 +117,7 @@ export default function App() {
         <ul className="mt-2 space-y-1 text-sm">
           {classes.map((c) => (
             <li key={c.id}>
-              {c.course} {c.title} · {c.days.join(" ")} {clock(Number(c.start.slice(0, 2)) * 60 + Number(c.start.slice(3)))}–{clock(Number(c.end.slice(0, 2)) * 60 + Number(c.end.slice(3)))} · {c.location}{" "}
+              {c.course} {c.title} · {c.days.join(" ")} {formatScheduleTime(minutes(c.start))}–{formatScheduleTime(minutes(c.end))} · {c.location}{" "}
               <button type="button" className="text-xs underline" onClick={() => void remove(c.id)}>remove</button>
             </li>
           ))}
@@ -122,14 +133,54 @@ export default function App() {
   );
 }
 
-function BlockView({ block }: { block: Block }) {
-  const top = (Math.max(block.from, START) - START) * PX;
-  const height = Math.max(14, (Math.min(block.to, END) - Math.max(block.from, START)) * PX);
-  const style = block.kind === "class" ? "bg-sky-500/25 border-sky-500/50" : block.unconfirmed ? "bg-amber-500/25 border-amber-500/60" : "bg-rose-500/25 border-rose-500/60";
+function BlockName({ block }: { block: Block }) {
+  return block.href ? (
+    <a href={block.href} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+      {block.label}
+    </a>
+  ) : <span>{block.label}</span>;
+}
+
+function Agenda({ columns }: { columns: DayColumn[] }) {
+  const days = columns.filter((column) => column.allDay.length || column.blocks.length);
   return (
-    <div className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 text-[10px] leading-tight ${style}`} style={{ top, height }} title={`${block.label} ${block.detail}`}>
-      <div className="truncate font-medium">{block.label}</div>
-      {height > 26 && <div className="truncate text-zinc-600 dark:text-zinc-300">{clock(block.from)}–{clock(block.to)} {block.detail}</div>}
+    <section aria-label="Week agenda" className="mt-4 space-y-4 lg:hidden">
+      {days.length === 0 && <p className="text-sm text-zinc-500 dark:text-zinc-400">No classes or deadlines this week.</p>}
+      {days.map((day) => (
+        <div key={day.date}>
+          <h2 className="mb-1 text-sm font-semibold">{dayName(day.date)}</h2>
+          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 px-3 dark:divide-zinc-800 dark:border-zinc-800">
+            {[...day.allDay, ...day.blocks].map((block, index) => (
+              <li key={block.id} className="py-2 text-sm">
+                <div className="break-words font-medium"><BlockName block={block} /></div>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  {index < day.allDay.length ? "All day" : blockTime(block)}
+                  {block.kind === "deadline" ? " · Deadline" : block.detail ? ` · ${block.detail}` : ""}
+                  {block.unconfirmed && " · Unconfirmed"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function BlockView({ block, start, height }: { block: Block; start: number; height: number }) {
+  const blockHeight = Math.max(14, (block.to - block.from) * PX);
+  const top = Math.min((block.from - start) * PX, height - blockHeight);
+  const style = block.kind === "class" ? "bg-sky-500/25 border-sky-500/50" : block.unconfirmed ? "bg-amber-500/25 border-amber-500/60" : "bg-rose-500/25 border-rose-500/60";
+  const time = blockTime(block);
+  return (
+    <div className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 text-[10px] leading-tight ${style}`} style={{ top, height: blockHeight }} title={`${time} · ${block.label} ${block.detail}`}>
+      <div className="truncate font-medium">
+        {block.kind === "deadline" && <span className="mr-1">{time}</span>}
+        <BlockName block={block} />
+      </div>
+      {block.kind === "class" && blockHeight > 26 && (
+        <div className="truncate text-zinc-600 dark:text-zinc-300">{time} {block.detail}</div>
+      )}
     </div>
   );
 }

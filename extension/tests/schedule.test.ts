@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { addDays, buildScheduleFile, layoutWeek, mondayOf, parseDays, parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule } from "@/src/schedule/model";
+import {
+  addDays, buildScheduleFile, formatScheduleTime, layoutWeek, mondayOf, parseDays,
+  parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule, weekDisplayRange,
+} from "@/src/schedule/model";
 import { schedulePath } from "@/src/sync/run";
 
 const TABLE = `| Course | Days | Time | Location |
@@ -58,6 +61,36 @@ describe("week layout", () => {
     expect(mondayOf("2026-10-18")).toBe("2026-10-12"); // Sunday
     expect(addDays("2026-10-26", 7)).toBe("2026-11-02");
   });
+  it("keeps normal daytime hours for a standard week", () => {
+    const week = layoutWeek("2026-10-12", classes, [
+      { id: "day", title: "All day", course: "X", dueAt: "2026-10-16T03:59:00Z", allDay: true },
+    ]);
+    expect(weekDisplayRange(week)).toEqual({ start: 7 * 60, end: 23 * 60 });
+  });
+
+  it("encloses extra-early classes and retains the true midnight and 11:59 PM deadlines", () => {
+    const week = layoutWeek("2026-10-12", [
+      { id: "early", course: "X", title: "Lab", days: ["mon"], start: "06:25", end: "07:10", location: "Room 1" },
+    ], [
+      { id: "midnight", title: "Midnight", course: "X", dueAt: "2026-10-12T04:00:00Z", allDay: false },
+      {
+        id: "late", title: "Late", course: "X", dueAt: "2026-10-19T03:59:00Z", allDay: false,
+        href: "https://canvas.example.test/courses/11/assignments/42",
+      },
+    ]);
+    expect(weekDisplayRange(week)).toEqual({ start: 0, end: 24 * 60 });
+    expect(week[0]!.blocks).toEqual([
+      expect.objectContaining({ id: "midnight", from: 0, to: 0 }),
+      expect.objectContaining({ id: "early@2026-10-12", from: 385, to: 430 }),
+    ]);
+    expect(week[6]!.blocks).toEqual([
+      expect.objectContaining({ id: "late", from: 1419, to: 1439, href: "https://canvas.example.test/courses/11/assignments/42" }),
+    ]);
+    expect(formatScheduleTime(0)).toBe("12:00 AM");
+    expect(formatScheduleTime(1439)).toBe("11:59 PM");
+    expect(formatScheduleTime(1440)).toBe("12:00 AM");
+  });
+
   it("places classes on their days and deadlines at Eastern time", () => {
     const week = layoutWeek("2026-10-12", classes, [
       { id: "d1", title: "HW 5", course: "ECE 3030", dueAt: "2026-10-16T01:00:00Z", allDay: false }, // Thu 9:00 pm EDT
