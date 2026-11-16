@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDays, agendaBlocks, buildScheduleFile, formatScheduleTime, layoutWeek, mondayOf, parseDays,
-  parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule, weekDisplayRange,
+  addDays, agendaBlocks, buildScheduleFile, formatScheduleTime, layoutTimedTiles, layoutWeek, mondayOf, parseDays,
+  parseScheduleTable, parseTimeRange, sameSchedule, serializeSchedule, weekDisplayRange, type Block,
 } from "@/src/schedule/model";
 import { schedulePath } from "@/src/sync/run";
 
@@ -89,6 +89,30 @@ describe("week layout", () => {
     expect(formatScheduleTime(0)).toBe("12:00 AM");
     expect(formatScheduleTime(1439)).toBe("11:59 PM");
     expect(formatScheduleTime(1440)).toBe("12:00 AM");
+  });
+
+  it("gives simultaneous 11:59 PM deadlines separate tiles", () => {
+    const [day] = layoutWeek("2026-10-12", [], ["a", "b"].map((id) => ({
+      id, title: id, course: "X", dueAt: "2026-10-13T03:59:00Z", allDay: false,
+      href: `https://canvas.example.test/tasks/${id}`,
+    })));
+    const tiles = layoutTimedTiles(day!.blocks, 23 * 60, 24 * 60, 0.8);
+    expect(tiles.map(({ lane, lanes, block }) => [lane, lanes, block.id])).toEqual([[0, 2, "a"], [1, 2, "b"]]);
+    expect(tiles.every(({ top, height }) => top >= 0 && top + height <= 48)).toBe(true);
+  });
+
+  it("sizes transitive overlaps together and allows adjacent tiles to use full width", () => {
+    const block = (id: string, from: number, to: number): Block => ({ id, from, to, label: id, kind: "class", detail: "" });
+    const tiles = layoutTimedTiles([
+      block("a", 0, 14),
+      block("b", 14, 16), block("c", 20, 22), block("d", 30, 35),
+      block("e", 59, 60), block("f", 56, 58),
+    ], 0, 60, 1);
+    expect(tiles.map(({ block, top, height, lane, lanes }) => [block.id, top, height, lane, lanes])).toEqual([
+      ["a", 0, 14, 0, 1],
+      ["b", 14, 14, 0, 2], ["c", 20, 14, 1, 2], ["d", 30, 14, 0, 2],
+      ["e", 46, 14, 0, 2], ["f", 46, 14, 1, 2],
+    ]);
   });
 
   it("orders the agenda by displayed time while preserving the timeline's marker placement", () => {

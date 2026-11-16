@@ -9,8 +9,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { easternDay } from "@/src/dates/merge";
 import {
-  addDays, agendaBlocks, DAYS, formatScheduleTime, layoutWeek, loadClasses, minutes, mondayOf,
-  parseScheduleTable, saveClasses, weekDisplayRange, type Block, type ClassMeeting, type DayColumn,
+  addDays, agendaBlocks, DAYS, formatScheduleTime, layoutTimedTiles, layoutWeek, loadClasses, minutes, mondayOf,
+  parseScheduleTable, saveClasses, weekDisplayRange, type Block, type ClassMeeting, type DayColumn, type TimedTile,
 } from "@/src/schedule/model";
 import { useSnapshot } from "@/src/ui/useSnapshot";
 
@@ -66,6 +66,12 @@ export default function App() {
   const { start, end } = weekDisplayRange(columns);
   const height = (end - start) * PX;
   const hours = Array.from({ length: (end - start) / 60 + 1 }, (_, i) => start + i * 60);
+  const timeline = columns.map((day) => {
+    const tiles = layoutTimedTiles(day.blocks, start, end, PX);
+    const lanes = tiles.reduce((max, tile) => Math.max(max, tile.lanes), 1);
+    return { day, tiles, width: Math.max(92, lanes * 58) };
+  });
+  const gridColumns = ["62px", ...timeline.map(({ width }) => `minmax(${width}px, 1fr)`)].join(" ");
   return (
     <div className="mx-auto max-w-6xl p-6 text-zinc-900 dark:text-zinc-100">
       <h1 className="text-xl font-semibold">Week schedule</h1>
@@ -85,7 +91,7 @@ export default function App() {
 
       <Agenda columns={columns} />
       <div className="mt-4 hidden overflow-x-auto pb-2 lg:block">
-        <div className="grid min-w-[760px]" style={{ gridTemplateColumns: "62px repeat(7, minmax(0, 1fr))" }}>
+        <div className="grid min-w-[760px]" style={{ gridTemplateColumns: gridColumns }}>
           <div />
           {columns.map((c, i) => (
             <div key={c.date} className="border-b border-zinc-200 px-1 pb-1 text-center text-xs font-medium dark:border-zinc-700">
@@ -103,10 +109,10 @@ export default function App() {
               <span key={h} className="absolute right-1 -translate-y-1/2 text-[10px] text-zinc-500" style={{ top: (h - start) * PX }}>{formatScheduleTime(h)}</span>
             ))}
           </div>
-          {columns.map((c) => (
-            <div key={c.date} className="relative border-l border-zinc-200 dark:border-zinc-700" style={{ height }}>
+          {timeline.map(({ day, tiles }) => (
+            <div key={day.date} className="relative border-l border-zinc-200 dark:border-zinc-700" style={{ height }}>
               {hours.map((h) => <div key={h} className="absolute inset-x-0 border-t border-zinc-100 dark:border-zinc-800" style={{ top: (h - start) * PX }} />)}
-              {c.blocks.map((block) => <BlockView key={block.id} block={block} start={start} height={height} />)}
+              {tiles.map((tile) => <BlockView key={tile.block.id} tile={tile} />)}
             </div>
           ))}
         </div>
@@ -167,19 +173,32 @@ function Agenda({ columns }: { columns: DayColumn[] }) {
   );
 }
 
-function BlockView({ block, start, height }: { block: Block; start: number; height: number }) {
-  const blockHeight = Math.max(14, (block.to - block.from) * PX);
-  const top = Math.min((block.from - start) * PX, height - blockHeight);
+function BlockView({ tile }: { tile: TimedTile }) {
+  const { block, top, height, lane, lanes } = tile;
   const style = block.kind === "class" ? "bg-sky-500/25 border-sky-500/50" : block.unconfirmed ? "bg-amber-500/25 border-amber-500/60" : "bg-rose-500/25 border-rose-500/60";
   const time = blockTime(block);
+  const content = (
+    <div className="truncate font-medium">
+      {block.kind === "deadline" && <span className="mr-1">{time}</span>}
+      <span>{block.label}</span>
+    </div>
+  );
   return (
-    <div className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 text-[10px] leading-tight ${style}`} style={{ top, height: blockHeight }} title={`${time} · ${block.label} ${block.detail}`}>
-      <div className="truncate font-medium">
-        {block.kind === "deadline" && <span className="mr-1">{time}</span>}
-        <BlockName block={block} />
-      </div>
-      {block.kind === "class" && blockHeight > 26 && (
-        <div className="truncate text-zinc-600 dark:text-zinc-300">{time} {block.detail}</div>
+    <div
+      className={`absolute overflow-hidden rounded border text-[10px] leading-tight ${style}`}
+      style={{ top, height, left: `calc(${lane * 100 / lanes}% + 1px)`, width: `calc(${100 / lanes}% - 2px)` }}
+      title={`${time} · ${block.label} ${block.detail}`}
+    >
+      {block.href ? (
+        <a
+          href={block.href} target="_blank" rel="noreferrer" aria-label={block.label}
+          className="block h-full px-1 underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-inset"
+        >
+          {content}
+        </a>
+      ) : <div className="px-1">{content}</div>}
+      {block.kind === "class" && height > 26 && (
+        <div className="truncate px-1 text-zinc-600 dark:text-zinc-300">{time} {block.detail}</div>
       )}
     </div>
   );

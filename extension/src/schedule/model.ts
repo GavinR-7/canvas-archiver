@@ -224,6 +224,37 @@ export function agendaBlocks(day: DayColumn): Block[] {
   return [...day.allDay, ...timed];
 }
 
+export interface TimedTile {
+  block: Block;
+  top: number;
+  height: number;
+  lane: number;
+  lanes: number;
+}
+
+/** Pack actual painted intervals, including minimum height at the bottom of the grid. */
+export function layoutTimedTiles(blocks: readonly Block[], start: number, end: number, scale: number): TimedTile[] {
+  const height = (end - start) * scale;
+  const tiles = blocks.map((block) => {
+    const top = Math.min((block.from - start) * scale, height - 14);
+    const bottom = Math.min(height, Math.max((block.to - start) * scale, top + 14));
+    return { block, top, bottom };
+  }).sort((a, b) => a.top - b.top || a.block.id.localeCompare(b.block.id));
+
+  let laneEnds: number[] = [];
+  let groupEnd = -Infinity;
+  const placed = tiles.map(({ block, top, bottom }) => {
+    if (top >= groupEnd) laneEnds = [];
+    const available = laneEnds.findIndex((laneEnd) => laneEnd <= top);
+    const lane = available === -1 ? laneEnds.length : available;
+    laneEnds[lane] = bottom;
+    groupEnd = Math.max(groupEnd, bottom);
+    // Every tile in this cluster keeps a reference to its final lane widths.
+    return { block, top, height: bottom - top, lane, laneEnds };
+  });
+  return placed.map(({ laneEnds: group, ...tile }) => ({ ...tile, lanes: group.length }));
+}
+
 /** Default to daytime hours and expand to include every timed block for this week. */
 export function weekDisplayRange(columns: readonly DayColumn[]): { start: number; end: number } {
   let start = 7 * 60;
