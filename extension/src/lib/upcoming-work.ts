@@ -12,11 +12,16 @@ function byKnownDueTime(a: Task, b: Task): number {
   return dueTime(a) - dueTime(b) || a.title.localeCompare(b.title);
 }
 
+/** Only Gradescope has its own numeric course IDs in the snapshot. */
+export function workCourseKey(source: Task["source"], courseId: number): string {
+  return `${source === "gradescope" ? "gradescope" : "canvas"}:${courseId}`;
+}
+
 export function upcomingWork(
   tasks: readonly Task[],
   now: Date,
   days: number,
-  courseId: number | null,
+  courseKey: string | null,
   showCompleted: boolean,
 ): { attention: Task[]; upcoming: Task[] } {
   const window = taskWindow(now, days);
@@ -24,7 +29,7 @@ export function upcomingWork(
   const upcoming: Task[] = [];
 
   for (const task of tasks) {
-    if (courseId !== null && task.courseId !== courseId) continue;
+    if (courseKey !== null && workCourseKey(task.source, task.courseId) !== courseKey) continue;
 
     const status = taskStatus(task, now);
     if (status === "missing" || (status === "overdue" && !isExamTask(task))) {

@@ -42,14 +42,16 @@ describe("Upcoming work", () => {
   it("filters by course and hides completed work until requested", () => {
     const tasks = [
       task("other course", "2026-11-17T00:00:00Z", { courseId: 2 }),
+      task("Gradescope course", "2026-11-17T01:00:00Z", { source: "gradescope" }),
       task("submitted", "2026-11-19T00:00:00Z", { submission: submission({ workflowState: "submitted" }) }),
       task("graded", "2026-11-20T00:00:00Z", { submission: submission({ workflowState: "graded" }) }),
       task("past submitted", "2026-11-14T00:00:00Z", { submission: submission({ workflowState: "submitted" }) }),
       task("selected course due", "2026-11-18T00:00:00Z"),
     ];
 
-    expect(upcomingWork(tasks, NOW, 14, 1, false).upcoming.map((t) => t.id)).toEqual(["selected course due"]);
-    const all = upcomingWork(tasks, NOW, 14, 1, true);
+    expect(upcomingWork(tasks, NOW, 14, "canvas:1", false).upcoming.map((t) => t.id)).toEqual(["selected course due"]);
+    const all = upcomingWork(tasks, NOW, 14, "canvas:1", true);
+    expect(upcomingWork(tasks, NOW, 14, "gradescope:1", false).upcoming.map((t) => t.id)).toEqual(["Gradescope course"]);
     expect(all.attention).toEqual([]);
     expect(all.upcoming.map((t) => t.id)).toEqual(["selected course due", "submitted", "graded"]);
   });

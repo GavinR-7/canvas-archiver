@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { upcomingWork } from "@/src/lib/upcoming-work";
+import { upcomingWork, workCourseKey } from "@/src/lib/upcoming-work";
 import { UPCOMING_DAYS } from "@/src/canvas/api";
 import { DEFAULT_CANVAS_ORIGIN } from "@/src/config/canvas";
 import { GRADESCOPE_ORIGIN } from "@/src/config/gradescope";
@@ -99,17 +99,20 @@ export default function App() {
   const { snapshot, loading, refreshing, refresh } = useSnapshot();
   const now = useNow();
   const { tasks, error, gradescopeError, edError, fetchedAt, user } = snapshot;
-  const [courseId, setCourseId] = useState<number | null>(null);
+  const [courseKey, setCourseKey] = useState("");
   const [showCompleted, setShowCompleted] = useState(false);
   const courses = useMemo(() => {
     const names = new Map(snapshot.courses.filter((course) => !course.restricted)
-      .map((course) => [course.id, course.courseCode || course.name]));
+      .map((course) => [workCourseKey("canvas", course.id), course.courseCode || course.name]));
     for (const task of tasks) {
-      if (!names.has(task.courseId)) names.set(task.courseId, task.courseCode || task.courseName);
+      const key = workCourseKey(task.source, task.courseId);
+      if (names.has(key)) continue;
+      const name = task.courseCode || task.courseName;
+      names.set(key, task.source === "gradescope" ? `${name} (Gradescope)` : name);
     }
-    return [...names].sort((a, b) => a[1].localeCompare(b[1]) || a[0] - b[0]);
+    return [...names].sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
   }, [snapshot.courses, tasks]);
-  const selectedCourse = courses.some(([id]) => id === courseId) ? courseId : null;
+  const selectedCourse = courses.some(([key]) => key === courseKey) ? courseKey : null;
   // Dates typed in settings show at once, without waiting for the next sync.
   const [manual, setManual] = useState<ManualExams>({});
   useEffect(() => {
@@ -130,7 +133,6 @@ export default function App() {
     [tasks, now, selectedCourse, showCompleted],
   );
   const groups = useMemo(() => groupByDay(work.upcoming), [work.upcoming]);
-  const visibleExams = selectedCourse === null ? exams : exams.filter(({ course }) => course.id === selectedCourse);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -180,7 +182,7 @@ export default function App() {
               Course
               <select
                 value={selectedCourse ?? ""}
-                onChange={(event) => setCourseId(event.target.value ? Number(event.target.value) : null)}
+                onChange={(event) => setCourseKey(event.target.value)}
                 className="min-w-0 max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
               >
                 <option value="">All courses</option>
@@ -232,11 +234,11 @@ export default function App() {
         {!loading && (
           <section className="mt-10" aria-labelledby="all-exams">
             <h2 id="all-exams" className="mb-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">
-              {selectedCourse === null ? "All exams" : "Exams"}
+              All exams
             </h2>
-            {visibleExams.length === 0 && <p className="text-sm text-zinc-500 dark:text-zinc-400">No exam dates found.</p>}
+            {exams.length === 0 && <p className="text-sm text-zinc-500 dark:text-zinc-400">No exam dates found.</p>}
             <div className="space-y-4">
-              {visibleExams.map(({ course, exams: list }) => (
+              {exams.map(({ course, exams: list }) => (
                 <div key={course.id}>
                   <h3 className="mb-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     {course.courseCode || course.name}
